@@ -1,4 +1,4 @@
-working bybit trading bot with bollinger band strateg and breakout strategy
+working bybit trading bot with bollinger band strategy and breakout strategy
 backtesting included
 some test results are included in the csv folders
 
