@@ -1,0 +1,4 @@
+symbol,qty,position,status,stop_loss,mark_close,reversed
+TLMUSDT,2662.0,short,open,0.007556037037037037,False,True
+PHBUSDT,20.0,long,open,0.9674000000000005,False,True
+LDOUSDT,11.2,long,open,1.823421296296296,False,True

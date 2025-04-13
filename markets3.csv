@@ -1,0 +1,2 @@
+symbol,qty,position,status,stop_loss,mark_close,reversed
+TRUMPUSDT,0.5,short,open,19.42,False,False

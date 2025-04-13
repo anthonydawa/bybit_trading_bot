@@ -1,0 +1,18 @@
+{
+    "sydney": {
+        "start_epoch": 1739653200000,
+        "end_epoch": 1739685600000
+    },
+    "tokyo": {
+        "start_epoch": 1739664000000,
+        "end_epoch": 1739696400000
+    },
+    "london": {
+        "start_epoch": 1739689200000,
+        "end_epoch": 1739721600000
+    },
+    "ny": {
+        "start_epoch": 1739710800000,
+        "end_epoch": 1739743200000
+    }
+}

@@ -1,0 +1,4 @@
+symbol,qty,position,status,stop_loss,mark_close,reversed
+HPOS10IUSDT,337.0,long,open,0.0996,True,False
+TAIUSDT,109.0,long,open,0.2134942857142857,True,False
+EXAMPLEUSDT,1,none,closed,1,False,False

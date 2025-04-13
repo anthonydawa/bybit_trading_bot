@@ -1,0 +1,5 @@
+symbol,qty,position,stop_loss,take_profit,bbw,tp_atr_multiplier,sl_atr_multiplier,bb_period,bb_dev
+BUZZUSDT,0,none,0,0,0.07,4.0,1.0,20.0,1.8
+FWOGUSDT,0,none,0.0,0.0,0.06,4.0,3.0,20.0,1.7
+SHELLUSDT,0,none,0.0,0.0,0.04,2.0,1.0,21.0,1.7
+AVAAIUSDT,2740.0,short,0.04464428571428571,0.04136142857142858,0.06,4.0,2.0,21.0,1.7

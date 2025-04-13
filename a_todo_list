@@ -1,0 +1,9 @@
+perpetual market sessions based
+
+needs to start earliest as possible so that if it reversed it will be capture b the sdne sessio end
+
+1. remove closed markets on csv
+2. at run automation get current position and and deduct it to the total market to enter and open missing positions to match the total markets to open 
+3. market perpetual managed risk on what markets to enter
+4. atr version
+5. market shuffle instead of highest from lowest 

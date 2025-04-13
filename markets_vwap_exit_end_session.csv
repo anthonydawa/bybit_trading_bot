@@ -1,0 +1,2 @@
+symbol,qty,position,status,stop_loss,mark_close,reversed
+SUIUSDT,10,long,open,3.365,False,False
