@@ -11,6 +11,14 @@ yarn-error.log*
 .env.test.local
 .env.production.local
 
+# Backtest data and CSV dumps
+backtest/
+*.csv
+*.json
+!package.json
+!package-lock.json
+!tsconfig.json
+
 # Build archives & logs
 deploy_hostinger.zip
 *.log
