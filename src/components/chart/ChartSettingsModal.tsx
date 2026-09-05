@@ -432,6 +432,34 @@ export const ChartSettingsModal: React.FC<ChartSettingsModalProps> = ({
                   />
                 </label>
 
+                {/* Indicator Name Labels */}
+                <label className="flex items-center justify-between py-2 border-b border-[#2a2e39]/60 cursor-pointer">
+                  <div>
+                    <span className="font-medium text-slate-200 block">Indicator Name Labels</span>
+                    <span className="text-[11px] text-slate-400">Indicator name badges (EMA 50, EMA 200, etc.) on price scale</span>
+                  </div>
+                  <input
+                    type="checkbox"
+                    checked={draft.showIndicatorNameLabels}
+                    onChange={(e) => updateDraft({ showIndicatorNameLabels: e.target.checked })}
+                    className="w-4 h-4 rounded text-blue-600 bg-[#181b24] border-[#2a2e39] focus:ring-0 cursor-pointer"
+                  />
+                </label>
+
+                {/* Indicator Value Labels */}
+                <label className="flex items-center justify-between py-2 border-b border-[#2a2e39]/60 cursor-pointer">
+                  <div>
+                    <span className="font-medium text-slate-200 block">Indicator Value Labels</span>
+                    <span className="text-[11px] text-slate-400">Indicator real-time numerical value badges on price scale</span>
+                  </div>
+                  <input
+                    type="checkbox"
+                    checked={draft.showIndicatorLabels}
+                    onChange={(e) => updateDraft({ showIndicatorLabels: e.target.checked })}
+                    className="w-4 h-4 rounded text-blue-600 bg-[#181b24] border-[#2a2e39] focus:ring-0 cursor-pointer"
+                  />
+                </label>
+
                 {/* Grid Lines */}
                 <div className="py-2 space-y-2.5">
                   <div className="font-medium text-slate-200">Grid Lines</div>

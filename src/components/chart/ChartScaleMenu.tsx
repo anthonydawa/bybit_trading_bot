@@ -62,18 +62,37 @@ export const ChartScaleMenu: React.FC<ChartScaleMenuProps> = ({
 
   if (!isOpen) return null;
 
-  // Compute style coordinates: either custom coordinate or pinned near bottom-right
+  // Compute style coordinates: clamp precisely within viewport bounds
+  const menuWidth = 260;
+  const menuHeight = 440;
+  
+  const leftStyle = position
+    ? position.x + menuWidth > window.innerWidth - 10
+      ? Math.max(10, position.x - menuWidth)
+      : Math.min(position.x, window.innerWidth - menuWidth - 10)
+    : undefined;
+
+  const topStyle = position
+    ? position.y + menuHeight > window.innerHeight - 10
+      ? Math.max(10, position.y - menuHeight)
+      : Math.max(10, position.y)
+    : undefined;
+
   const menuStyle: React.CSSProperties = position
     ? {
         position: 'fixed',
-        left: Math.min(position.x, window.innerWidth - 240),
-        top: Math.max(10, Math.min(position.y - 300, window.innerHeight - 380)),
+        left: `${leftStyle}px`,
+        top: `${topStyle}px`,
       }
     : {
         position: 'absolute',
         right: '16px',
         bottom: '36px',
       };
+
+  const flyoutSideClass = (position && position.x < 300) || settings.scalePosition === 'left'
+    ? 'left-full ml-1'
+    : 'right-full mr-1';
 
   return (
     <div
@@ -208,6 +227,34 @@ export const ChartScaleMenu: React.FC<ChartScaleMenuProps> = ({
         </div>
       </button>
 
+      {/* Indicator name labels (EMA 50, EMA 200, etc.) */}
+      <button
+        type="button"
+        onClick={() => onUpdateSettings({ showIndicatorNameLabels: !settings.showIndicatorNameLabels })}
+        className="w-full flex items-center justify-between px-3 py-1.5 hover:bg-[#2a2e39] transition-colors text-left"
+      >
+        <div className="flex items-center gap-2.5">
+          <div className="w-4 flex items-center justify-center">
+            {settings.showIndicatorNameLabels && <Check className="w-3.5 h-3.5 text-blue-400" />}
+          </div>
+          <span>Indicator name labels (EMA, etc.)</span>
+        </div>
+      </button>
+
+      {/* Indicator value labels */}
+      <button
+        type="button"
+        onClick={() => onUpdateSettings({ showIndicatorLabels: !settings.showIndicatorLabels })}
+        className="w-full flex items-center justify-between px-3 py-1.5 hover:bg-[#2a2e39] transition-colors text-left"
+      >
+        <div className="flex items-center gap-2.5">
+          <div className="w-4 flex items-center justify-center">
+            {settings.showIndicatorLabels && <Check className="w-3.5 h-3.5 text-blue-400" />}
+          </div>
+          <span>Indicator value labels</span>
+        </div>
+      </button>
+
       {/* Labels Submenu Flyout */}
       <div
         className="relative"
@@ -226,7 +273,7 @@ export const ChartScaleMenu: React.FC<ChartScaleMenuProps> = ({
         </button>
 
         {activeSubmenu === 'labels' && (
-          <div className="absolute right-full top-0 mr-1 w-56 bg-[#1e222d] border border-[#2a2e39] rounded-xl shadow-2xl py-1.5 text-xs text-slate-200 z-50 animate-fade-in">
+          <div className={`absolute ${flyoutSideClass} top-0 w-56 bg-[#1e222d] border border-[#2a2e39] rounded-xl shadow-2xl py-1.5 text-xs text-slate-200 z-50 animate-fade-in`}>
             <button
               type="button"
               onClick={() => onUpdateSettings({ showLastPriceLabel: !settings.showLastPriceLabel })}
@@ -247,6 +294,17 @@ export const ChartScaleMenu: React.FC<ChartScaleMenuProps> = ({
                 {settings.showHighLowLabels && <Check className="w-3.5 h-3.5 text-blue-400" />}
               </div>
               <span>High and low price labels</span>
+            </button>
+
+            <button
+              type="button"
+              onClick={() => onUpdateSettings({ showIndicatorNameLabels: !settings.showIndicatorNameLabels })}
+              className="w-full flex items-center gap-2.5 px-3 py-1.5 hover:bg-[#2a2e39] transition-colors text-left"
+            >
+              <div className="w-4 flex items-center justify-center">
+                {settings.showIndicatorNameLabels && <Check className="w-3.5 h-3.5 text-blue-400" />}
+              </div>
+              <span>Indicator name labels</span>
             </button>
 
             <button
@@ -292,7 +350,7 @@ export const ChartScaleMenu: React.FC<ChartScaleMenuProps> = ({
         </button>
 
         {activeSubmenu === 'lines' && (
-          <div className="absolute right-full top-0 mr-1 w-56 bg-[#1e222d] border border-[#2a2e39] rounded-xl shadow-2xl py-1.5 text-xs text-slate-200 z-50 animate-fade-in">
+          <div className={`absolute ${flyoutSideClass} top-0 w-56 bg-[#1e222d] border border-[#2a2e39] rounded-xl shadow-2xl py-1.5 text-xs text-slate-200 z-50 animate-fade-in`}>
             <button
               type="button"
               onClick={() => onUpdateSettings({ showPriceLine: !settings.showPriceLine })}

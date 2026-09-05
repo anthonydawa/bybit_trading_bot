@@ -19,6 +19,7 @@ export interface ChartCustomizationSettings {
   candleBorderUpColor: string;
   candleBorderDownColor: string;
   showIndicatorTitles: boolean;
+  showIndicatorNameLabels: boolean;
   showExecutionLines: boolean;
   precision: 'default' | '2' | '4' | '8';
   showWatermark: boolean;
@@ -47,6 +48,7 @@ export const DEFAULT_CHART_SETTINGS: ChartCustomizationSettings = {
   candleBorderDownColor: '#ef4444',
   backgroundColor: '#090d16',
   showIndicatorTitles: true,
+  showIndicatorNameLabels: false,
   showExecutionLines: true,
   precision: 'default',
   showWatermark: true,
@@ -60,7 +62,12 @@ export function getStoredChartSettings(): ChartCustomizationSettings {
   try {
     const raw = localStorage.getItem(STORAGE_KEY);
     if (raw) {
-      return { ...DEFAULT_CHART_SETTINGS, ...JSON.parse(raw) };
+      const parsed = JSON.parse(raw);
+      return {
+        ...DEFAULT_CHART_SETTINGS,
+        ...parsed,
+        showIndicatorNameLabels: parsed.showIndicatorNameLabels ?? false,
+      };
     }
   } catch (e) {
     console.warn('Failed to parse stored chart settings:', e);

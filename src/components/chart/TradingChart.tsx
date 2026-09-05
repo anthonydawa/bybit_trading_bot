@@ -482,56 +482,56 @@ export const TradingChart = forwardRef<TradingChartRef, TradingChartProps>(({
       color: indicatorConfigs.ema9.color,
       lineWidth: indicatorConfigs.ema9.lineWidth as any,
       lineStyle: getLineStyle(indicatorConfigs.ema9.lineStyle),
-      title: 'EMA 9',
+      title: settings.showIndicatorNameLabels ? 'EMA 9' : '',
     });
 
     ema20SeriesRef.current = chart.addLineSeries({
       color: indicatorConfigs.ema20.color,
       lineWidth: indicatorConfigs.ema20.lineWidth as any,
       lineStyle: getLineStyle(indicatorConfigs.ema20.lineStyle),
-      title: 'EMA 20',
+      title: settings.showIndicatorNameLabels ? 'EMA 20' : '',
     });
 
     ema50SeriesRef.current = chart.addLineSeries({
       color: indicatorConfigs.ema50.color,
       lineWidth: indicatorConfigs.ema50.lineWidth as any,
       lineStyle: getLineStyle(indicatorConfigs.ema50.lineStyle),
-      title: 'EMA 50',
+      title: settings.showIndicatorNameLabels ? 'EMA 50' : '',
     });
 
     ema200SeriesRef.current = chart.addLineSeries({
       color: indicatorConfigs.ema200.color,
       lineWidth: indicatorConfigs.ema200.lineWidth as any,
       lineStyle: getLineStyle(indicatorConfigs.ema200.lineStyle),
-      title: 'EMA 200',
+      title: settings.showIndicatorNameLabels ? 'EMA 200' : '',
     });
 
     bbUpperSeriesRef.current = chart.addLineSeries({
       color: indicatorConfigs.bollinger.color,
       lineWidth: indicatorConfigs.bollinger.lineWidth as any,
       lineStyle: getLineStyle(indicatorConfigs.bollinger.lineStyle),
-      title: 'BB Upper',
+      title: settings.showIndicatorNameLabels ? 'BB Upper' : '',
     });
 
     bbMiddleSeriesRef.current = chart.addLineSeries({
       color: indicatorConfigs.bollinger.color,
       lineWidth: Math.max(1, indicatorConfigs.bollinger.lineWidth - 1) as any,
       lineStyle: LineStyle.Dashed,
-      title: 'BB Mid',
+      title: settings.showIndicatorNameLabels ? 'BB Mid' : '',
     });
 
     bbLowerSeriesRef.current = chart.addLineSeries({
       color: indicatorConfigs.bollinger.color,
       lineWidth: indicatorConfigs.bollinger.lineWidth as any,
       lineStyle: getLineStyle(indicatorConfigs.bollinger.lineStyle),
-      title: 'BB Lower',
+      title: settings.showIndicatorNameLabels ? 'BB Lower' : '',
     });
 
     supertrendSeriesRef.current = chart.addLineSeries({
       color: indicatorConfigs.supertrend.color,
       lineWidth: indicatorConfigs.supertrend.lineWidth as any,
       lineStyle: getLineStyle(indicatorConfigs.supertrend.lineStyle),
-      title: 'Supertrend',
+      title: settings.showIndicatorNameLabels ? 'Supertrend' : '',
     });
 
     // Crosshair hover listener for Real-Time Floating OHLCV
@@ -591,12 +591,22 @@ export const TradingChart = forwardRef<TradingChartRef, TradingChartProps>(({
       }
     };
 
+    const handleContextMenu = (e: MouseEvent) => {
+      e.preventDefault();
+      setScaleMenuPos({ x: e.clientX, y: e.clientY });
+      setIsScaleMenuOpen(true);
+    };
+    if (container) {
+      container.addEventListener('contextmenu', handleContextMenu, true);
+    }
+
     window.addEventListener('resize', handleResize);
     handleResize();
 
     return () => {
       if (container) {
         container.removeEventListener('dblclick', handleResetChart);
+        container.removeEventListener('contextmenu', handleContextMenu, true);
       }
       window.removeEventListener('resize', handleResize);
       resizeObserver.disconnect();
@@ -721,21 +731,22 @@ export const TradingChart = forwardRef<TradingChartRef, TradingChartProps>(({
       });
     }
 
-    // Indicator last value labels
-    const indSeries = [
-      ema9SeriesRef.current,
-      ema20SeriesRef.current,
-      ema50SeriesRef.current,
-      ema200SeriesRef.current,
-      bbUpperSeriesRef.current,
-      bbMiddleSeriesRef.current,
-      bbLowerSeriesRef.current,
-      supertrendSeriesRef.current,
+    // Indicator labels (name badges and last values)
+    const indSeriesWithTitle: [any, string][] = [
+      [ema9SeriesRef.current, 'EMA 9'],
+      [ema20SeriesRef.current, 'EMA 20'],
+      [ema50SeriesRef.current, 'EMA 50'],
+      [ema200SeriesRef.current, 'EMA 200'],
+      [bbUpperSeriesRef.current, 'BB Upper'],
+      [bbMiddleSeriesRef.current, 'BB Mid'],
+      [bbLowerSeriesRef.current, 'BB Lower'],
+      [supertrendSeriesRef.current, 'Supertrend'],
     ];
-    for (const s of indSeries) {
+    for (const [s, title] of indSeriesWithTitle) {
       if (s) {
         s.applyOptions({
           lastValueVisible: settings.showIndicatorLabels,
+          title: settings.showIndicatorNameLabels ? title : '',
         });
       }
     }
@@ -925,7 +936,7 @@ export const TradingChart = forwardRef<TradingChartRef, TradingChartProps>(({
       />
 
       {/* 2. TradingView Style On-Chart Active Legend */}
-      {activeLegendList.length > 0 && (
+      {settings.showIndicatorTitles && activeLegendList.length > 0 && (
         <div className="absolute top-2 left-14 z-10 flex flex-wrap items-center gap-1.5 pointer-events-auto">
           {activeLegendList.map((item) => (
             <div
