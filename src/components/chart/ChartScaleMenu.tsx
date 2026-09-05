@@ -255,6 +255,20 @@ export const ChartScaleMenu: React.FC<ChartScaleMenuProps> = ({
         </div>
       </button>
 
+      {/* Indicator price lines (dotted lines) */}
+      <button
+        type="button"
+        onClick={() => onUpdateSettings({ showIndicatorPriceLines: !settings.showIndicatorPriceLines })}
+        className="w-full flex items-center justify-between px-3 py-1.5 hover:bg-[#2a2e39] transition-colors text-left"
+      >
+        <div className="flex items-center gap-2.5">
+          <div className="w-4 flex items-center justify-center">
+            {settings.showIndicatorPriceLines && <Check className="w-3.5 h-3.5 text-blue-400" />}
+          </div>
+          <span>Indicator price lines (dotted)</span>
+        </div>
+      </button>
+
       {/* Labels Submenu Flyout */}
       <div
         className="relative"
@@ -360,6 +374,17 @@ export const ChartScaleMenu: React.FC<ChartScaleMenuProps> = ({
                 {settings.showPriceLine && <Check className="w-3.5 h-3.5 text-blue-400" />}
               </div>
               <span>Symbol last price line</span>
+            </button>
+
+            <button
+              type="button"
+              onClick={() => onUpdateSettings({ showIndicatorPriceLines: !settings.showIndicatorPriceLines })}
+              className="w-full flex items-center gap-2.5 px-3 py-1.5 hover:bg-[#2a2e39] transition-colors text-left"
+            >
+              <div className="w-4 flex items-center justify-center">
+                {settings.showIndicatorPriceLines && <Check className="w-3.5 h-3.5 text-blue-400" />}
+              </div>
+              <span>Indicator price lines (dotted)</span>
             </button>
 
             <button

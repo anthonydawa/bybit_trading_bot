@@ -483,6 +483,7 @@ export const TradingChart = forwardRef<TradingChartRef, TradingChartProps>(({
       lineWidth: indicatorConfigs.ema9.lineWidth as any,
       lineStyle: getLineStyle(indicatorConfigs.ema9.lineStyle),
       title: settings.showIndicatorNameLabels ? 'EMA 9' : '',
+      priceLineVisible: settings.showIndicatorPriceLines,
     });
 
     ema20SeriesRef.current = chart.addLineSeries({
@@ -490,6 +491,7 @@ export const TradingChart = forwardRef<TradingChartRef, TradingChartProps>(({
       lineWidth: indicatorConfigs.ema20.lineWidth as any,
       lineStyle: getLineStyle(indicatorConfigs.ema20.lineStyle),
       title: settings.showIndicatorNameLabels ? 'EMA 20' : '',
+      priceLineVisible: settings.showIndicatorPriceLines,
     });
 
     ema50SeriesRef.current = chart.addLineSeries({
@@ -497,6 +499,7 @@ export const TradingChart = forwardRef<TradingChartRef, TradingChartProps>(({
       lineWidth: indicatorConfigs.ema50.lineWidth as any,
       lineStyle: getLineStyle(indicatorConfigs.ema50.lineStyle),
       title: settings.showIndicatorNameLabels ? 'EMA 50' : '',
+      priceLineVisible: settings.showIndicatorPriceLines,
     });
 
     ema200SeriesRef.current = chart.addLineSeries({
@@ -504,6 +507,7 @@ export const TradingChart = forwardRef<TradingChartRef, TradingChartProps>(({
       lineWidth: indicatorConfigs.ema200.lineWidth as any,
       lineStyle: getLineStyle(indicatorConfigs.ema200.lineStyle),
       title: settings.showIndicatorNameLabels ? 'EMA 200' : '',
+      priceLineVisible: settings.showIndicatorPriceLines,
     });
 
     bbUpperSeriesRef.current = chart.addLineSeries({
@@ -511,6 +515,7 @@ export const TradingChart = forwardRef<TradingChartRef, TradingChartProps>(({
       lineWidth: indicatorConfigs.bollinger.lineWidth as any,
       lineStyle: getLineStyle(indicatorConfigs.bollinger.lineStyle),
       title: settings.showIndicatorNameLabels ? 'BB Upper' : '',
+      priceLineVisible: settings.showIndicatorPriceLines,
     });
 
     bbMiddleSeriesRef.current = chart.addLineSeries({
@@ -518,6 +523,7 @@ export const TradingChart = forwardRef<TradingChartRef, TradingChartProps>(({
       lineWidth: Math.max(1, indicatorConfigs.bollinger.lineWidth - 1) as any,
       lineStyle: LineStyle.Dashed,
       title: settings.showIndicatorNameLabels ? 'BB Mid' : '',
+      priceLineVisible: settings.showIndicatorPriceLines,
     });
 
     bbLowerSeriesRef.current = chart.addLineSeries({
@@ -525,6 +531,7 @@ export const TradingChart = forwardRef<TradingChartRef, TradingChartProps>(({
       lineWidth: indicatorConfigs.bollinger.lineWidth as any,
       lineStyle: getLineStyle(indicatorConfigs.bollinger.lineStyle),
       title: settings.showIndicatorNameLabels ? 'BB Lower' : '',
+      priceLineVisible: settings.showIndicatorPriceLines,
     });
 
     supertrendSeriesRef.current = chart.addLineSeries({
@@ -532,6 +539,7 @@ export const TradingChart = forwardRef<TradingChartRef, TradingChartProps>(({
       lineWidth: indicatorConfigs.supertrend.lineWidth as any,
       lineStyle: getLineStyle(indicatorConfigs.supertrend.lineStyle),
       title: settings.showIndicatorNameLabels ? 'Supertrend' : '',
+      priceLineVisible: settings.showIndicatorPriceLines,
     });
 
     // Crosshair hover listener for Real-Time Floating OHLCV
@@ -747,6 +755,7 @@ export const TradingChart = forwardRef<TradingChartRef, TradingChartProps>(({
         s.applyOptions({
           lastValueVisible: settings.showIndicatorLabels,
           title: settings.showIndicatorNameLabels ? title : '',
+          priceLineVisible: settings.showIndicatorPriceLines,
         });
       }
     }

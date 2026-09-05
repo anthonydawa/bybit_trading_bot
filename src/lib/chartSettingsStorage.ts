@@ -20,6 +20,7 @@ export interface ChartCustomizationSettings {
   candleBorderDownColor: string;
   showIndicatorTitles: boolean;
   showIndicatorNameLabels: boolean;
+  showIndicatorPriceLines: boolean;
   showExecutionLines: boolean;
   precision: 'default' | '2' | '4' | '8';
   showWatermark: boolean;
@@ -36,6 +37,7 @@ export const DEFAULT_CHART_SETTINGS: ChartCustomizationSettings = {
   showHighLowLabels: true,
   showIndicatorLabels: true,
   showPriceLine: true,
+  showIndicatorPriceLines: false,
   showCountdown: true,
   showGridVert: true,
   showGridHorz: true,
@@ -67,6 +69,7 @@ export function getStoredChartSettings(): ChartCustomizationSettings {
         ...DEFAULT_CHART_SETTINGS,
         ...parsed,
         showIndicatorNameLabels: parsed.showIndicatorNameLabels ?? false,
+        showIndicatorPriceLines: parsed.showIndicatorPriceLines ?? false,
       };
     }
   } catch (e) {

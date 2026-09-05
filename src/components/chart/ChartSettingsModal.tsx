@@ -460,6 +460,20 @@ export const ChartSettingsModal: React.FC<ChartSettingsModalProps> = ({
                   />
                 </label>
 
+                {/* Indicator Price Lines (Dotted) */}
+                <label className="flex items-center justify-between py-2 border-b border-[#2a2e39]/60 cursor-pointer">
+                  <div>
+                    <span className="font-medium text-slate-200 block">Indicator Price Lines</span>
+                    <span className="text-[11px] text-slate-400">Horizontal dotted price lines across chart for active indicators</span>
+                  </div>
+                  <input
+                    type="checkbox"
+                    checked={draft.showIndicatorPriceLines}
+                    onChange={(e) => updateDraft({ showIndicatorPriceLines: e.target.checked })}
+                    className="w-4 h-4 rounded text-blue-600 bg-[#181b24] border-[#2a2e39] focus:ring-0 cursor-pointer"
+                  />
+                </label>
+
                 {/* Grid Lines */}
                 <div className="py-2 space-y-2.5">
                   <div className="font-medium text-slate-200">Grid Lines</div>
