@@ -7,6 +7,19 @@ export interface Candle {
   volume: number;
 }
 
+export type ChartStyleType = 'candles' | 'hollow' | 'line' | 'area' | 'bars';
+
+export interface OHLCData {
+  time: number;
+  open: number;
+  high: number;
+  low: number;
+  close: number;
+  volume: number;
+  change: number;
+  changePercent: number;
+}
+
 export interface TickerInfo {
   symbol: string;
   lastPrice: number;
@@ -80,18 +93,22 @@ export interface Position {
 export interface Strategy {
   id: string;
   name: string;
-  category: string;
+  category?: string;
+  type?: string;
   timeframes: string[];
   description: string;
   rules: {
-    longCondition: string;
-    shortCondition: string;
+    longCondition?: string;
+    shortCondition?: string;
+    entryLong?: string;
+    entryShort?: string;
     stopLoss: string;
     takeProfit: string;
     minRiskReward?: number;
     maxLeverage?: number;
+    maxRiskPerTradePcnt?: number;
   };
-  checklist: string[];
+  checklist?: string[];
   createdAt?: string;
 }
 

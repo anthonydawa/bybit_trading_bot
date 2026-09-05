@@ -5,12 +5,15 @@ import {
   ISeriesApi,
   CandlestickData,
   HistogramData,
+  LineData,
+  BarData,
   ColorType,
   CrosshairMode,
   LineStyle,
+  PriceScaleMode,
 } from 'lightweight-charts';
 import { Settings, Eye, RotateCcw } from 'lucide-react';
-import { Candle, IndicatorSettings } from '../../lib/types';
+import { Candle, IndicatorSettings, ChartStyleType, OHLCData } from '../../lib/types';
 import {
   AllIndicatorConfigs,
   DEFAULT_INDICATOR_CONFIGS,
@@ -19,8 +22,6 @@ import {
 import {
   calculateEMA,
   calculateBollingerBands,
-  calculateRSI,
-  calculateMACD,
   calculateSupertrend,
 } from '../../lib/indicators';
 import {
@@ -34,6 +35,8 @@ import {
 } from '../../lib/drawingStorage';
 import { DrawingToolbar } from './DrawingToolbar';
 import { DrawingOverlay } from './DrawingOverlay';
+import { RsiSubChart } from './RsiSubChart';
+import { MacdSubChart } from './MacdSubChart';
 
 export interface TradingChartRef {
   captureSnapshot: () => Promise<string | null>;
@@ -44,11 +47,13 @@ interface TradingChartProps {
   candles: Candle[];
   symbol: string;
   timeframe: string;
+  chartStyle?: ChartStyleType;
   indicators: IndicatorSettings;
   indicatorConfigs?: AllIndicatorConfigs;
   onOpenIndicatorSettings?: (key: keyof AllIndicatorConfigs) => void;
   onToggleIndicator?: (key: keyof AllIndicatorConfigs) => void;
   onPriceHover?: (price: number | null) => void;
+  onHoverOhlc?: (data: OHLCData | null) => void;
 }
 
 function getLineStyle(style?: LineStyleType): LineStyle {
@@ -57,20 +62,32 @@ function getLineStyle(style?: LineStyleType): LineStyle {
   return LineStyle.Solid;
 }
 
+const RANGE_SHORTCUTS = [
+  { label: '1D', durationDays: 1 },
+  { label: '5D', durationDays: 5 },
+  { label: '1M', durationDays: 30 },
+  { label: '3M', durationDays: 90 },
+  { label: '6M', durationDays: 180 },
+  { label: 'YTD', isYtd: true },
+  { label: 'ALL', isAll: true },
+];
+
 export const TradingChart = forwardRef<TradingChartRef, TradingChartProps>(({
   candles,
   symbol,
   timeframe,
+  chartStyle = 'candles',
   indicators,
   indicatorConfigs = DEFAULT_INDICATOR_CONFIGS,
   onOpenIndicatorSettings,
   onToggleIndicator,
   onPriceHover,
+  onHoverOhlc,
 }, ref) => {
   const chartContainerRef = useRef<HTMLDivElement>(null);
 
   const chartRef = useRef<IChartApi | null>(null);
-  const candleSeriesRef = useRef<ISeriesApi<'Candlestick'> | null>(null);
+  const mainSeriesRef = useRef<ISeriesApi<any> | null>(null);
   const volumeSeriesRef = useRef<ISeriesApi<'Histogram'> | null>(null);
 
   // Indicator Series Refs
@@ -83,6 +100,11 @@ export const TradingChart = forwardRef<TradingChartRef, TradingChartProps>(({
   const bbLowerSeriesRef = useRef<ISeriesApi<'Line'> | null>(null);
   const supertrendSeriesRef = useRef<ISeriesApi<'Line'> | null>(null);
 
+  // TradingView Scale Options State
+  const [isAutoScale, setIsAutoScale] = useState<boolean>(true);
+  const [isLogScale, setIsLogScale] = useState<boolean>(false);
+  const [activeRange, setActiveRange] = useState<string>('ALL');
+
   // Drawing Tools State (Persisted per symbol in browser LocalStorage)
   const [drawings, setDrawings] = useState<Drawing[]>(() => getStoredDrawings(symbol));
   const [activeTool, setActiveTool] = useState<DrawingToolType>('cursor');
@@ -92,20 +114,78 @@ export const TradingChart = forwardRef<TradingChartRef, TradingChartProps>(({
 
   // Re-center / Auto-Scale / Normalize Chart View Function
   const handleResetChart = useCallback(() => {
-    if (chartRef.current && candleSeriesRef.current) {
-      // 1. Re-enable Auto-Scale on the vertical price scale
-      candleSeriesRef.current.priceScale().applyOptions({
+    if (chartRef.current && mainSeriesRef.current) {
+      mainSeriesRef.current.priceScale().applyOptions({
         autoScale: true,
         scaleMargins: {
           top: 0.08,
           bottom: 0.15,
         },
       });
-      // 2. Reset time scale zoom and scroll to fit all available candles
+      setIsAutoScale(true);
       chartRef.current.timeScale().resetTimeScale();
       chartRef.current.timeScale().fitContent();
     }
   }, []);
+
+  // Toggle Auto-Scale Mode
+  const handleToggleAutoScale = () => {
+    if (mainSeriesRef.current) {
+      const next = !isAutoScale;
+      mainSeriesRef.current.priceScale().applyOptions({
+        autoScale: next,
+      });
+      setIsAutoScale(next);
+      if (next) {
+        chartRef.current?.timeScale().fitContent();
+      }
+    }
+  };
+
+  // Toggle Logarithmic Scale Mode
+  const handleToggleLogScale = () => {
+    if (mainSeriesRef.current) {
+      const next = !isLogScale;
+      mainSeriesRef.current.priceScale().applyOptions({
+        mode: next ? PriceScaleMode.Logarithmic : PriceScaleMode.Normal,
+      });
+      setIsLogScale(next);
+    }
+  };
+
+  // Range Shortcuts (1D, 5D, 1M, 3M, 6M, YTD, ALL)
+  const handleSelectRange = (shortcut: typeof RANGE_SHORTCUTS[number]) => {
+    if (!chartRef.current || candles.length === 0) return;
+    setActiveRange(shortcut.label);
+
+    const timeScale = chartRef.current.timeScale();
+    const lastCandleTime = candles[candles.length - 1].time;
+
+    if (shortcut.isAll) {
+      timeScale.resetTimeScale();
+      timeScale.fitContent();
+      return;
+    }
+
+    let fromTime: number;
+    if (shortcut.isYtd) {
+      const currentYear = new Date().getFullYear();
+      fromTime = Math.floor(new Date(currentYear, 0, 1).getTime() / 1000);
+    } else if (shortcut.durationDays) {
+      fromTime = lastCandleTime - shortcut.durationDays * 86400;
+    } else {
+      fromTime = candles[0].time;
+    }
+
+    try {
+      timeScale.setVisibleRange({
+        from: fromTime as any,
+        to: (lastCandleTime + 3600) as any,
+      });
+    } catch (e) {
+      timeScale.fitContent();
+    }
+  };
 
   // Load symbol-specific drawings when symbol changes
   useEffect(() => {
@@ -199,7 +279,7 @@ export const TradingChart = forwardRef<TradingChartRef, TradingChartProps>(({
     resetChart: handleResetChart,
   }));
 
-  // 1. Initialize Main Trading Chart
+  // 1. Initialize Main Trading Chart & Series
   useEffect(() => {
     if (!chartContainerRef.current) return;
 
@@ -255,15 +335,36 @@ export const TradingChart = forwardRef<TradingChartRef, TradingChartProps>(({
 
     chartRef.current = chart;
 
-    // Candlestick Series
-    const candleSeries = chart.addCandlestickSeries({
-      upColor: '#10b981',
-      downColor: '#ef4444',
-      borderVisible: false,
-      wickUpColor: '#10b981',
-      wickDownColor: '#ef4444',
-    });
-    candleSeriesRef.current = candleSeries;
+    // Create Main Price Series based on Chart Style
+    let mainSeries: ISeriesApi<any>;
+    if (chartStyle === 'line') {
+      mainSeries = chart.addLineSeries({
+        color: '#3b82f6',
+        lineWidth: 2,
+      });
+    } else if (chartStyle === 'area') {
+      mainSeries = chart.addAreaSeries({
+        topColor: 'rgba(59, 130, 246, 0.4)',
+        bottomColor: 'rgba(59, 130, 246, 0.0)',
+        lineColor: '#3b82f6',
+        lineWidth: 2,
+      });
+    } else if (chartStyle === 'bars') {
+      mainSeries = chart.addBarSeries({
+        upColor: '#10b981',
+        downColor: '#ef4444',
+      });
+    } else {
+      // Default: Candlesticks (or hollow)
+      mainSeries = chart.addCandlestickSeries({
+        upColor: '#10b981',
+        downColor: '#ef4444',
+        borderVisible: false,
+        wickUpColor: '#10b981',
+        wickDownColor: '#ef4444',
+      });
+    }
+    mainSeriesRef.current = mainSeries;
 
     // Volume Series
     const volumeSeries = chart.addHistogramSeries({
@@ -316,7 +417,7 @@ export const TradingChart = forwardRef<TradingChartRef, TradingChartProps>(({
 
     bbMiddleSeriesRef.current = chart.addLineSeries({
       color: indicatorConfigs.bollinger.color,
-      lineWidth: indicatorConfigs.bollinger.lineWidth as any,
+      lineWidth: Math.max(1, indicatorConfigs.bollinger.lineWidth - 1) as any,
       lineStyle: LineStyle.Dashed,
       title: 'BB Mid',
     });
@@ -335,15 +436,32 @@ export const TradingChart = forwardRef<TradingChartRef, TradingChartProps>(({
       title: 'Supertrend',
     });
 
-    // Crosshair hover listener
+    // Crosshair hover listener for Real-Time Floating OHLCV
     chart.subscribeCrosshairMove((param) => {
-      if (param.point && param.seriesData && candleSeries) {
-        const data = param.seriesData.get(candleSeries) as any;
-        if (data && onPriceHover) {
-          onPriceHover(data.close || null);
+      if (param.point && param.seriesData && mainSeries) {
+        const data = param.seriesData.get(mainSeries) as any;
+        if (data) {
+          const price = data.close ?? data.value ?? null;
+          onPriceHover?.(price);
+
+          if (data.open != null && data.close != null) {
+            const change = data.close - data.open;
+            const changePercent = data.open !== 0 ? (change / data.open) * 100 : 0;
+            const volData = volumeSeries ? (param.seriesData.get(volumeSeries) as any) : null;
+            onHoverOhlc?.({
+              open: data.open,
+              high: data.high,
+              low: data.low,
+              close: data.close,
+              volume: volData?.value || 0,
+              change,
+              changePercent,
+              time: Number(data.time),
+            });
+          }
         }
-      } else if (onPriceHover) {
-        onPriceHover(null);
+      } else {
+        onPriceHover?.(null);
       }
     });
 
@@ -353,7 +471,7 @@ export const TradingChart = forwardRef<TradingChartRef, TradingChartProps>(({
       container.addEventListener('dblclick', handleResetChart);
     }
 
-    // Resize observer for smooth sliding transitions
+    // Resize observer
     const resizeObserver = new ResizeObserver((entries) => {
       if (!entries || entries.length === 0 || !chartContainerRef.current || !chart) return;
       const { width, height } = entries[0].contentRect;
@@ -386,20 +504,44 @@ export const TradingChart = forwardRef<TradingChartRef, TradingChartProps>(({
       resizeObserver.disconnect();
       chart.remove();
     };
-  }, [handleResetChart]);
+  }, [chartStyle, handleResetChart]);
 
   // 2. Update Data, Indicators, Colors, Thickness, and Line Styles
   useEffect(() => {
-    if (!candleSeriesRef.current || !volumeSeriesRef.current || candles.length === 0) return;
+    if (!mainSeriesRef.current || !volumeSeriesRef.current || candles.length === 0) return;
 
-    // Format Candlestick Data
-    const formattedCandles: CandlestickData[] = candles.map((c) => ({
-      time: c.time as any,
-      open: c.open,
-      high: c.high,
-      low: c.low,
-      close: c.close,
-    }));
+    // Format Data for Main Series
+    if (chartStyle === 'line' || chartStyle === 'area') {
+      const lineData: LineData[] = candles.map((c) => ({
+        time: c.time as any,
+        value: c.close,
+      }));
+      mainSeriesRef.current.setData(lineData);
+    } else {
+      const candleData: CandlestickData[] = candles.map((c) => ({
+        time: c.time as any,
+        open: c.open,
+        high: c.high,
+        low: c.low,
+        close: c.close,
+      }));
+      mainSeriesRef.current.setData(candleData);
+    }
+
+    // Default latest candle for floating OHLC bar when not hovering
+    const latest = candles[candles.length - 1];
+    if (latest) {
+      onHoverOhlc?.({
+        open: latest.open,
+        high: latest.high,
+        low: latest.low,
+        close: latest.close,
+        volume: latest.volume,
+        change: latest.close - latest.open,
+        changePercent: latest.open > 0 ? ((latest.close - latest.open) / latest.open) * 100 : 0,
+        time: latest.time,
+      });
+    }
 
     // Format Volume Data
     const formattedVolume: HistogramData[] = candles.map((c) => ({
@@ -407,8 +549,6 @@ export const TradingChart = forwardRef<TradingChartRef, TradingChartProps>(({
       value: c.volume,
       color: c.close >= c.open ? 'rgba(16, 185, 129, 0.35)' : 'rgba(239, 68, 68, 0.35)',
     }));
-
-    candleSeriesRef.current.setData(formattedCandles);
     volumeSeriesRef.current.setData(formattedVolume);
 
     // Apply Dynamic Styling & Data for EMA 9
@@ -521,7 +661,7 @@ export const TradingChart = forwardRef<TradingChartRef, TradingChartProps>(({
         supertrendSeriesRef.current.setData([]);
       }
     }
-  }, [candles, indicatorConfigs]);
+  }, [candles, indicatorConfigs, chartStyle]);
 
   // Active indicator list for the on-chart legend
   const activeLegendList = [
@@ -549,9 +689,9 @@ export const TradingChart = forwardRef<TradingChartRef, TradingChartProps>(({
         onToggleLockDrawings={() => setAreDrawingsLocked(!areDrawingsLocked)}
       />
 
-      {/* 2. TradingView / Bybit Style On-Chart Indicator Legend */}
+      {/* 2. TradingView Style On-Chart Active Legend */}
       {activeLegendList.length > 0 && (
-        <div className="absolute top-2.5 left-14 z-10 flex flex-wrap items-center gap-1.5 pointer-events-auto">
+        <div className="absolute top-2 left-14 z-10 flex flex-wrap items-center gap-1.5 pointer-events-auto">
           {activeLegendList.map((item) => (
             <div
               key={item.key}
@@ -590,37 +730,117 @@ export const TradingChart = forwardRef<TradingChartRef, TradingChartProps>(({
         </div>
       )}
 
-      {/* 3. Re-Center / Auto-Scale Button (Top-Right of Chart) */}
-      <div className="absolute top-2.5 right-16 z-10 pointer-events-auto">
-        <button
-          type="button"
-          onClick={handleResetChart}
-          className="flex items-center gap-1.5 px-2 py-1 rounded-lg bg-slate-900/80 hover:bg-slate-800 backdrop-blur-sm border border-slate-800 text-xs font-sans text-slate-400 hover:text-white shadow-md transition-all active:scale-95"
-          title="Re-Center & Auto-Scale Chart (or Double-Click Chart / Price Scale)"
-        >
-          <RotateCcw className="w-3 h-3" />
-          <span className="text-[11px]">Re-Center</span>
-        </button>
+      {/* 3. Main Chart Canvas Viewport */}
+      <div className="flex-1 w-full relative min-h-[260px] overflow-hidden">
+        <div ref={chartContainerRef} className="w-full h-full" />
+
+        {/* 4. Interactive Drawing SVG Overlay Layer */}
+        <DrawingOverlay
+          chart={chartRef.current}
+          series={mainSeriesRef.current}
+          candles={candles}
+          drawings={drawings}
+          onAddDrawing={handleAddDrawing}
+          onUpdateDrawing={handleUpdateDrawing}
+          onDeleteDrawing={handleDeleteDrawing}
+          activeTool={activeTool}
+          onResetTool={() => setActiveTool('cursor')}
+          isMagnetEnabled={isMagnetEnabled}
+          areDrawingsHidden={areDrawingsHidden}
+          areDrawingsLocked={areDrawingsLocked}
+        />
+
+        {/* 5. TradingView Standard Bottom-Right Scale Controls */}
+        <div className="absolute bottom-3 right-16 z-20 flex items-center gap-1 pointer-events-auto select-none">
+          {/* Auto-Scale Toggle */}
+          <button
+            type="button"
+            onClick={handleToggleAutoScale}
+            className={`px-1.5 py-0.5 rounded text-[10px] font-mono font-bold transition-all ${
+              isAutoScale
+                ? 'bg-blue-600 text-white shadow-md shadow-blue-500/30'
+                : 'bg-slate-900/80 text-slate-400 hover:text-white border border-slate-800'
+            }`}
+            title="Toggle Auto-Scale"
+          >
+            auto
+          </button>
+
+          {/* Logarithmic Scale Toggle */}
+          <button
+            type="button"
+            onClick={handleToggleLogScale}
+            className={`px-1.5 py-0.5 rounded text-[10px] font-mono font-bold transition-all ${
+              isLogScale
+                ? 'bg-indigo-600 text-white shadow-md shadow-indigo-500/30'
+                : 'bg-slate-900/80 text-slate-400 hover:text-white border border-slate-800'
+            }`}
+            title="Toggle Logarithmic Price Scale"
+          >
+            log
+          </button>
+
+          {/* Re-Center / Normalize Button */}
+          <button
+            type="button"
+            onClick={handleResetChart}
+            className="p-1 rounded bg-slate-900/80 hover:bg-slate-800 text-slate-400 hover:text-white border border-slate-800 transition-all active:scale-95"
+            title="Re-Center & Normalize Chart (or Double-Click Chart)"
+          >
+            <RotateCcw className="w-3 h-3" />
+          </button>
+        </div>
       </div>
 
-      {/* 4. Main Chart Canvas */}
-      <div ref={chartContainerRef} className="flex-1 w-full h-full min-h-[300px]" />
+      {/* 6. Synchronized Sub-Pane: RSI (14) */}
+      {indicatorConfigs.rsi.enabled && (
+        <RsiSubChart
+          candles={candles}
+          period={indicatorConfigs.rsi.period || 14}
+          color={indicatorConfigs.rsi.color || '#a855f7'}
+          lineWidth={indicatorConfigs.rsi.lineWidth || 2}
+          onClose={() => onToggleIndicator?.('rsi')}
+          onOpenSettings={() => onOpenIndicatorSettings?.('rsi')}
+          mainChart={chartRef.current}
+        />
+      )}
 
-      {/* 5. Interactive Drawing SVG Overlay Layer */}
-      <DrawingOverlay
-        chart={chartRef.current}
-        series={candleSeriesRef.current}
-        candles={candles}
-        drawings={drawings}
-        onAddDrawing={handleAddDrawing}
-        onUpdateDrawing={handleUpdateDrawing}
-        onDeleteDrawing={handleDeleteDrawing}
-        activeTool={activeTool}
-        onResetTool={() => setActiveTool('cursor')}
-        isMagnetEnabled={isMagnetEnabled}
-        areDrawingsHidden={areDrawingsHidden}
-        areDrawingsLocked={areDrawingsLocked}
-      />
+      {/* 7. Synchronized Sub-Pane: MACD (12, 26, 9) */}
+      {indicatorConfigs.macd.enabled && (
+        <MacdSubChart
+          candles={candles}
+          fastLength={12}
+          slowLength={26}
+          signalLength={9}
+          onClose={() => onToggleIndicator?.('macd')}
+          onOpenSettings={() => onOpenIndicatorSettings?.('macd')}
+          mainChart={chartRef.current}
+        />
+      )}
+
+      {/* 8. Bottom TradingView Range Selector Bar (1D, 5D, 1M, 3M, 6M, YTD, ALL) */}
+      <div className="flex items-center justify-between px-3 py-1 bg-[#0d131f] border-t border-slate-800/80 text-[11px] font-mono text-slate-400 shrink-0 select-none">
+        <div className="flex items-center gap-1">
+          {RANGE_SHORTCUTS.map((sc) => (
+            <button
+              key={sc.label}
+              onClick={() => handleSelectRange(sc)}
+              className={`px-2 py-0.5 rounded transition-all ${
+                activeRange === sc.label
+                  ? 'bg-blue-600/30 text-blue-300 font-bold border border-blue-500/40'
+                  : 'hover:bg-slate-800 text-slate-400 hover:text-slate-200'
+              }`}
+            >
+              {sc.label}
+            </button>
+          ))}
+        </div>
+
+        <div className="flex items-center gap-3 text-[10px] text-slate-500 font-sans">
+          <span>UTC (Bybit V5)</span>
+          <span className="w-1.5 h-1.5 rounded-full bg-emerald-400 animate-pulse" />
+        </div>
+      </div>
     </div>
   );
 });
