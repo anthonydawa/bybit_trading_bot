@@ -2,8 +2,8 @@
   "name": "ai-trading-bot-platform",
   "version": "1.0.0",
   "type": "module",
-  "description": "AI-Assisted Bybit Trading Platform with Gemini Multimodal Copilot & TradingView-style charts",
   "private": true,
+  "homepage": "https://bybit-trading-bot.hostingersite.com",
   "scripts": {
     "dev": "concurrently -k -p \"[{name}]\" -n \"SERVER,FRONTEND\" -c \"cyan,magenta\" \"npm run dev:server\" \"npm run dev:client\"",
     "dev:server": "node server/index.js",
