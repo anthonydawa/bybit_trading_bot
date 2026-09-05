@@ -276,12 +276,12 @@ class BybitWebSocketClient {
     // Sort Bids descending (highest price first)
     const sortedBids = Array.from(book.bids.entries())
       .sort((a, b) => b[0] - a[0])
-      .slice(0, 30);
+      .slice(0, 50);
 
     // Sort Asks ascending (lowest price first)
     const sortedAsks = Array.from(book.asks.entries())
       .sort((a, b) => a[0] - b[0])
-      .slice(0, 30);
+      .slice(0, 50);
 
     let cumulativeBidTotal = 0;
     const bids: OrderBookEntry[] = sortedBids.map(([price, size]) => {

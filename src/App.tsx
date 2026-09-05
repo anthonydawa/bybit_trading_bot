@@ -627,10 +627,10 @@ export const App: React.FC = () => {
         {/* 1. Sliding Order Book Drawer */}
         <div
           className={`transition-[width,opacity] duration-300 ease-in-out shrink-0 overflow-hidden ${
-            !isFullscreen && isOrderBookOpen ? 'w-52 opacity-100' : 'w-0 opacity-0 pointer-events-none'
+            !isFullscreen && isOrderBookOpen ? 'w-64 opacity-100' : 'w-0 opacity-0 pointer-events-none'
           }`}
         >
-          <div className="w-52 min-w-[208px] h-full">
+          <div className="w-64 min-w-[256px] h-full">
             <OrderBook
               orderBook={orderBook}
               currentPrice={currentPrice}
