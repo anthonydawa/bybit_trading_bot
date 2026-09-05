@@ -11,6 +11,7 @@ import {
 } from 'lucide-react';
 import { Position } from '../../lib/types';
 import { PaperAccount } from '../../lib/paperTrading';
+import { formatMarketPrice, formatMarketQty } from '../../lib/marketUtils';
 
 interface PositionsTableProps {
   positions: Position[];
@@ -124,22 +125,22 @@ export const PositionsTable: React.FC<PositionsTableProps> = ({
 
                       {/* Size */}
                       <td className="py-2.5 px-3 text-slate-300">
-                        {pos.size.toFixed(4)}
+                        {formatMarketQty(pos.size, pos.symbol)}
                       </td>
 
                       {/* Entry Price */}
                       <td className="py-2.5 px-3 text-slate-300">
-                        ${pos.entryPrice.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 4 })}
+                        ${formatMarketPrice(pos.entryPrice, pos.symbol)}
                       </td>
 
                       {/* Mark Price */}
                       <td className="py-2.5 px-3 text-slate-200 font-semibold">
-                        ${pos.markPrice.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 4 })}
+                        ${formatMarketPrice(pos.markPrice, pos.symbol)}
                       </td>
 
                       {/* Liquidation Price */}
                       <td className="py-2.5 px-3 text-rose-400">
-                        ${pos.liquidationPrice.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 4 })}
+                        ${formatMarketPrice(pos.liquidationPrice, pos.symbol)}
                       </td>
 
                       {/* Margin */}
@@ -159,8 +160,8 @@ export const PositionsTable: React.FC<PositionsTableProps> = ({
 
                       {/* TP / SL */}
                       <td className="py-2.5 px-3 text-[11px] text-slate-400">
-                        <div>TP: <span className="text-emerald-400">{pos.takeProfit ? `$${pos.takeProfit}` : '--'}</span></div>
-                        <div>SL: <span className="text-rose-400">{pos.stopLoss ? `$${pos.stopLoss}` : '--'}</span></div>
+                        <div>TP: <span className="text-emerald-400">{pos.takeProfit ? `$${formatMarketPrice(pos.takeProfit, pos.symbol)}` : '--'}</span></div>
+                        <div>SL: <span className="text-rose-400">{pos.stopLoss ? `$${formatMarketPrice(pos.stopLoss, pos.symbol)}` : '--'}</span></div>
                       </td>
 
                       {/* Close Action */}
@@ -213,7 +214,7 @@ export const PositionsTable: React.FC<PositionsTableProps> = ({
                         </span>
                       </td>
                       <td className="py-2 px-3 text-slate-300">
-                        ${t.entryPrice.toFixed(2)} → ${t.exitPrice.toFixed(2)}
+                        ${formatMarketPrice(t.entryPrice, t.symbol)} → ${formatMarketPrice(t.exitPrice, t.symbol)}
                       </td>
                       <td className="py-2 px-3">
                         <span className={`font-bold ${isProfit ? 'text-emerald-400' : 'text-rose-400'}`}>

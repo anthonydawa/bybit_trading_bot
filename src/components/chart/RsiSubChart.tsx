@@ -24,7 +24,7 @@ export const RsiSubChart: React.FC<RsiSubChartProps> = ({
   candles,
   period = 14,
   color = '#a855f7',
-  lineWidth = 2,
+  lineWidth = 1,
   onClose,
   onOpenSettings,
   mainChart,

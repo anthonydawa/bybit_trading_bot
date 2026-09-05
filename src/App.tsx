@@ -25,13 +25,14 @@ import {
 import { extractMarketSnapshot } from './lib/indicators';
 import { bybitWs } from './lib/bybitWebSocket';
 import { paperTrading, PaperAccount } from './lib/paperTrading';
-import { klineCache } from './lib/klineCache';
+import { klineCache, sanitizeCandles } from './lib/klineCache';
 import { apiClient } from './lib/apiClient';
 import {
   AllIndicatorConfigs,
   getStoredIndicatorConfigs,
   saveStoredIndicatorConfigs,
 } from './lib/indicatorConfig';
+import { fetchInstruments } from './lib/marketUtils';
 import {
   getStoredCredentials,
   saveStoredCredentials,
@@ -123,6 +124,10 @@ export const App: React.FC = () => {
     if (!el) return;
 
     if (!document.fullscreenElement) {
+      // Close side drawers on entering fullscreen for a clean, distraction-free chart
+      setIsOrderBookOpen(false);
+      setIsOrderFormOpen(false);
+      setIsAiSidebarOpen(false);
       if (el.requestFullscreen) {
         el.requestFullscreen().then(() => {
           setIsFullscreen(true);
@@ -196,90 +201,131 @@ export const App: React.FC = () => {
       })
       .catch((e) => console.warn('Failed to load tickers:', e));
 
+    // Fetch and cache instrument specifications (tickSize, priceScale, lot steps)
+    fetchInstruments().catch((e) => console.warn('Failed to load instruments:', e));
+
     // Initialize Bybit WebSocket
     bybitWs.connect();
   }, []);
 
   // 2. Fetch Historical Klines and Initial State when Symbol or Timeframe changes
   useEffect(() => {
+    let isCancelled = false;
+    const reqSymbol = symbol;
+    const reqTimeframe = timeframe;
+
     // Prime ticker snapshot
-    const existingTicker = tickers.find((t) => t.symbol === symbol);
+    const existingTicker = tickers.find((t) => t.symbol === reqSymbol);
     if (existingTicker) {
       setCurrentTicker(existingTicker);
       bybitWs.setTickerSnapshot(existingTicker);
     }
 
-    // 1. Prime candles immediately from local cache (0ms instant render)
-    klineCache.get(symbol, timeframe).then((cached) => {
+    // 1. Prime candles immediately from local cache if valid for this EXACT symbol & timeframe
+    klineCache.get(reqSymbol, reqTimeframe).then((cached) => {
+      if (isCancelled) return;
       if (cached && cached.length > 0) {
         setCandles(cached);
+      } else {
+        // Clear previous timeframe candles so different periods never mix or flash
+        setCandles([]);
       }
     });
 
-    // 2. Fetch full 1000 candles from Bybit (Max allowed by Bybit V5 API)
-    apiClient.getKlines(symbol, timeframe, 1000)
+    // 2. Fetch fresh, verified 1000 candles from Bybit (authoritative source of truth)
+    apiClient.getKlines(reqSymbol, reqTimeframe, 1000)
       .then((parsed) => {
-        if (parsed.length > 0) {
-          setCandles((prev) => {
-            const merged = klineCache.merge(prev, parsed);
-            klineCache.set(symbol, timeframe, merged);
-            return merged;
-          });
+        if (isCancelled) return;
+        if (parsed && parsed.length > 0) {
+          const sanitized = sanitizeCandles(parsed, reqTimeframe);
+          setCandles(sanitized);
+          klineCache.set(reqSymbol, reqTimeframe, sanitized);
         }
       })
       .catch((e) => console.warn('Failed to load klines:', e));
 
     // Fetch initial orderbook snapshot via REST to avoid blank state
-    apiClient.getOrderBook(symbol, 50)
+    apiClient.getOrderBook(reqSymbol, 50)
       .then((book) => {
+        if (isCancelled) return;
         if (book.bids.length > 0 || book.asks.length > 0) {
           const rawBids: [string, string][] = book.bids.map((b) => [b.price.toString(), b.size.toString()]);
           const rawAsks: [string, string][] = book.asks.map((a) => [a.price.toString(), a.size.toString()]);
-          bybitWs.setOrderBookSnapshot(symbol, rawBids, rawAsks);
+          bybitWs.setOrderBookSnapshot(reqSymbol, rawBids, rawAsks);
         }
       })
       .catch((e) => console.warn('Failed to load initial orderbook:', e));
 
     // Subscribe to WebSocket updates for Kline, Ticker, Orderbook
-    const unsubKline = bybitWs.subscribeKline(symbol, timeframe, (newCandle) => {
+    const unsubKline = bybitWs.subscribeKline(reqSymbol, reqTimeframe, (newCandle) => {
+      if (isCancelled) return;
+      if (!newCandle || !Number.isFinite(newCandle.time) || newCandle.time <= 0 || !Number.isFinite(newCandle.close)) {
+        return;
+      }
+
       setCandles((prev) => {
-        let updated: Candle[];
         if (prev.length === 0) {
-          updated = [newCandle];
-        } else {
-          const last = prev[prev.length - 1];
-          if (last.time === newCandle.time) {
-            updated = [...prev];
-            updated[updated.length - 1] = newCandle;
-          } else if (newCandle.time > last.time) {
-            updated = [...prev, newCandle].slice(-1500);
-          } else {
-            updated = prev;
-          }
+          return [newCandle];
         }
-        klineCache.set(symbol, timeframe, updated);
-        return updated;
+        const last = prev[prev.length - 1];
+
+        // Same candle interval: in-flight tick update
+        if (last.time === newCandle.time) {
+          const updated = [...prev];
+          updated[updated.length - 1] = {
+            ...newCandle,
+            open: last.open, // Lock initial open price to prevent jumping while forming
+            high: Math.max(last.high, newCandle.high, newCandle.close),
+            low: Math.min(last.low, newCandle.low, newCandle.close),
+          };
+          klineCache.set(reqSymbol, reqTimeframe, updated);
+          return updated;
+        }
+
+        // New candle has officially started
+        if (newCandle.time > last.time) {
+          // In continuous 24/7 crypto markets, open of next bar aligns seamlessly with previous close
+          const seamlessOpen =
+            last.close > 0 && Math.abs(newCandle.open - last.close) / last.close < 0.005
+              ? last.close
+              : newCandle.open;
+
+          const candleToAdd: Candle = {
+            ...newCandle,
+            open: seamlessOpen,
+            high: Math.max(newCandle.high, seamlessOpen, newCandle.close),
+            low: Math.min(newCandle.low, seamlessOpen, newCandle.close),
+          };
+          const updated = [...prev, candleToAdd].slice(-1500);
+          klineCache.set(reqSymbol, reqTimeframe, updated);
+          return updated;
+        }
+
+        return prev;
       });
 
       if (isPaperMode) {
-        paperTrading.updatePositions({ [symbol]: newCandle.close });
+        paperTrading.updatePositions({ [reqSymbol]: newCandle.close });
         setPaperAccount(paperTrading.getAccount());
       }
     });
 
-    const unsubTicker = bybitWs.subscribeTicker(symbol, (ticker) => {
+    const unsubTicker = bybitWs.subscribeTicker(reqSymbol, (ticker) => {
+      if (isCancelled) return;
       setCurrentTicker(ticker);
       if (isPaperMode) {
-        paperTrading.updatePositions({ [symbol]: ticker.lastPrice });
+        paperTrading.updatePositions({ [reqSymbol]: ticker.lastPrice });
         setPaperAccount(paperTrading.getAccount());
       }
     });
 
-    const unsubOrderBook = bybitWs.subscribeOrderBook(symbol, (data) => {
+    const unsubOrderBook = bybitWs.subscribeOrderBook(reqSymbol, (data) => {
+      if (isCancelled) return;
       setOrderBook(data);
     });
 
     return () => {
+      isCancelled = true;
       unsubKline();
       unsubTicker();
       unsubOrderBook();
@@ -557,14 +603,14 @@ export const App: React.FC = () => {
       )}
 
       {/* 2. Main Workspace Layout */}
-      <div className="flex-1 flex overflow-hidden min-h-0 relative">
+      <div
+        ref={chartWrapperRef}
+        className={`flex-1 flex overflow-hidden min-h-0 relative ${
+          isFullscreen ? 'fixed inset-0 z-50 bg-[#090d16] w-screen h-screen' : ''
+        }`}
+      >
         {/* Left/Center Column: Chart Header + Chart Canvas + Positions Table */}
-        <div
-          ref={chartWrapperRef}
-          className={`flex-1 flex flex-col min-w-0 h-full overflow-hidden transition-all duration-200 ${
-            isFullscreen ? 'fixed inset-0 z-50 bg-[#090d16] w-screen h-screen' : ''
-          }`}
-        >
+        <div className="flex-1 flex flex-col min-w-0 h-full overflow-hidden">
           {/* Chart Header Bar */}
           <ChartHeader
             symbol={symbol}
@@ -627,11 +673,12 @@ export const App: React.FC = () => {
         {/* 1. Sliding Order Book Drawer */}
         <div
           className={`transition-[width,opacity] duration-300 ease-in-out shrink-0 overflow-hidden ${
-            !isFullscreen && isOrderBookOpen ? 'w-64 opacity-100' : 'w-0 opacity-0 pointer-events-none'
+            isOrderBookOpen ? 'w-64 opacity-100' : 'w-0 opacity-0 pointer-events-none'
           }`}
         >
           <div className="w-64 min-w-[256px] h-full">
             <OrderBook
+              symbol={symbol}
               orderBook={orderBook}
               currentPrice={currentPrice}
               onClose={() => setIsOrderBookOpen(false)}
@@ -642,7 +689,7 @@ export const App: React.FC = () => {
         {/* 2. Sliding Trade Order Form Drawer */}
         <div
           className={`transition-[width,opacity] duration-300 ease-in-out shrink-0 overflow-hidden ${
-            !isFullscreen && isOrderFormOpen ? 'w-80 opacity-100' : 'w-0 opacity-0 pointer-events-none'
+            isOrderFormOpen ? 'w-80 opacity-100' : 'w-0 opacity-0 pointer-events-none'
           }`}
         >
           <div className="w-80 min-w-[320px] h-full">
@@ -663,7 +710,7 @@ export const App: React.FC = () => {
         {/* 3. Sliding Gemini AI Copilot Drawer */}
         <div
           className={`transition-[width,opacity] duration-300 ease-in-out shrink-0 overflow-hidden ${
-            !isFullscreen && isAiSidebarOpen ? 'w-96 opacity-100' : 'w-0 opacity-0 pointer-events-none'
+            isAiSidebarOpen ? 'w-96 opacity-100' : 'w-0 opacity-0 pointer-events-none'
           }`}
         >
           <div className="w-96 min-w-[384px] h-full">
@@ -744,11 +791,10 @@ export const App: React.FC = () => {
             </div>
           </div>
         )}
-      </div>
 
-      {/* Modals */}
-      {/* Ticker Search & Selector Modal */}
-      <TickerSelector
+        {/* Modals: Rendered inside chartWrapperRef for seamless Fullscreen Top-Layer display */}
+        {/* Ticker Search & Selector Modal */}
+        <TickerSelector
         isOpen={isTickerModalOpen}
         onClose={() => setIsTickerModalOpen(false)}
         tickers={tickers}
@@ -837,6 +883,7 @@ export const App: React.FC = () => {
         activeKey={selectedIndicatorKey}
         onSaveConfigs={handleSaveIndicatorConfigs}
       />
+      </div>
     </div>
   );
 };

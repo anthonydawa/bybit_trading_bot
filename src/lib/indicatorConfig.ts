@@ -35,21 +35,21 @@ export const DEFAULT_INDICATOR_CONFIGS: AllIndicatorConfigs = {
   ema20: {
     enabled: true,
     color: '#eab308', // Yellow
-    lineWidth: 2,
+    lineWidth: 1,
     lineStyle: 'solid',
     period: 20,
   },
   ema50: {
     enabled: true,
     color: '#f97316', // Orange
-    lineWidth: 2,
+    lineWidth: 1,
     lineStyle: 'solid',
     period: 50,
   },
   ema200: {
     enabled: true,
     color: '#a855f7', // Purple
-    lineWidth: 2,
+    lineWidth: 1,
     lineStyle: 'solid',
     period: 200,
   },
@@ -64,7 +64,7 @@ export const DEFAULT_INDICATOR_CONFIGS: AllIndicatorConfigs = {
   supertrend: {
     enabled: false,
     color: '#10b981', // Emerald
-    lineWidth: 2,
+    lineWidth: 1,
     lineStyle: 'solid',
     period: 10,
     multiplier: 3,
@@ -72,7 +72,7 @@ export const DEFAULT_INDICATOR_CONFIGS: AllIndicatorConfigs = {
   rsi: {
     enabled: true,
     color: '#818cf8', // Indigo
-    lineWidth: 2,
+    lineWidth: 1,
     lineStyle: 'solid',
     period: 14,
   },
@@ -87,17 +87,33 @@ export const DEFAULT_INDICATOR_CONFIGS: AllIndicatorConfigs = {
   },
 };
 
-const STORAGE_KEY = 'bybit_trading_indicator_configs';
+const STORAGE_KEY = 'bybit_trading_indicator_configs_v3';
+const LEGACY_STORAGE_KEY = 'bybit_trading_indicator_configs';
 
 export function getStoredIndicatorConfigs(): AllIndicatorConfigs {
   try {
-    const raw = localStorage.getItem(STORAGE_KEY);
+    let raw = localStorage.getItem(STORAGE_KEY);
+    let isLegacy = false;
+    if (!raw) {
+      raw = localStorage.getItem(LEGACY_STORAGE_KEY);
+      isLegacy = true;
+    }
     if (raw) {
       const parsed = JSON.parse(raw);
-      return {
+      const merged: AllIndicatorConfigs = {
         ...DEFAULT_INDICATOR_CONFIGS,
         ...parsed,
       };
+      // If migrating from legacy storage, reset any default 2px lines to 1px
+      if (isLegacy) {
+        (Object.keys(merged) as (keyof AllIndicatorConfigs)[]).forEach((k) => {
+          if (merged[k]?.lineWidth === 2) {
+            merged[k].lineWidth = 1;
+          }
+        });
+        localStorage.setItem(STORAGE_KEY, JSON.stringify(merged));
+      }
+      return merged;
     }
   } catch (e) {
     console.warn('Failed to load stored indicator configs:', e);

@@ -10,6 +10,7 @@ import {
   ChevronRight
 } from 'lucide-react';
 import { OrderFormData, OrderSide, OrderType, Strategy } from '../../lib/types';
+import { getMarketPrecision, formatMarketPrice, formatMarketQty } from '../../lib/marketUtils';
 
 interface OrderFormProps {
   symbol: string;
@@ -48,6 +49,9 @@ export const OrderForm: React.FC<OrderFormProps> = ({
       setPrice(currentPrice.toString());
     }
   }, [currentPrice, orderType]);
+
+  const marketPrecision = getMarketPrecision(symbol, currentPrice);
+  const priceStep = marketPrecision.tickSize > 0 ? marketPrecision.tickSize.toString() : 'any';
 
   const numUsdt = parseFloat(usdtAmount) || 0;
   const numPrice = orderType === 'Market' ? currentPrice : parseFloat(price) || currentPrice;
@@ -205,11 +209,11 @@ export const OrderForm: React.FC<OrderFormProps> = ({
             <div className="relative">
               <input
                 type="number"
-                step="any"
+                step={priceStep}
                 value={price}
                 onChange={(e) => setPrice(e.target.value)}
                 className="w-full bg-slate-900 border border-slate-700 rounded-lg px-3 py-2 text-white font-mono focus:border-blue-500 focus:outline-none"
-                placeholder="0.00"
+                placeholder={formatMarketPrice(currentPrice, symbol) || '0.00'}
               />
               <span className="absolute right-3 top-1/2 -translate-y-1/2 text-slate-500 text-xs">USDT</span>
             </div>
@@ -302,7 +306,7 @@ export const OrderForm: React.FC<OrderFormProps> = ({
                 </div>
                 <input
                   type="number"
-                  step="any"
+                  step={priceStep}
                   placeholder="Target Price..."
                   value={takeProfit}
                   onChange={(e) => setTakeProfit(e.target.value)}
@@ -321,7 +325,7 @@ export const OrderForm: React.FC<OrderFormProps> = ({
                 </div>
                 <input
                   type="number"
-                  step="any"
+                  step={priceStep}
                   placeholder="Stop Price..."
                   value={stopLoss}
                   onChange={(e) => setStopLoss(e.target.value)}
@@ -346,11 +350,11 @@ export const OrderForm: React.FC<OrderFormProps> = ({
         <div className="space-y-1 text-[11px] font-mono text-slate-400 bg-slate-900/60 p-2.5 rounded-lg border border-slate-800">
           <div className="flex justify-between">
             <span>Est. Liq Price:</span>
-            <span className="text-rose-400 font-semibold">${estLiqPrice.toFixed(2)}</span>
+            <span className="text-rose-400 font-semibold">${formatMarketPrice(estLiqPrice, symbol)}</span>
           </div>
           <div className="flex justify-between">
             <span>Order Size:</span>
-            <span className="text-slate-200">{positionQty.toFixed(4)} {symbol.replace('USDT', '')}</span>
+            <span className="text-slate-200">{formatMarketQty(positionQty, symbol)} {symbol.replace('USDT', '')}</span>
           </div>
           {activeStrategy && (
             <div className="flex justify-between pt-1 border-t border-slate-800/80 text-[10px]">

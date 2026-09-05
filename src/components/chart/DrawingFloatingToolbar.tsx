@@ -9,6 +9,7 @@ import {
   ArrowRight
 } from 'lucide-react';
 import { Drawing, LineStyleType, TrendlineDrawing } from '../../lib/drawingTypes';
+import { formatMarketPrice } from '../../lib/marketUtils';
 
 interface DrawingFloatingToolbarProps {
   drawing: Drawing;
@@ -52,7 +53,7 @@ export const DrawingFloatingToolbar: React.FC<DrawingFloatingToolbarProps> = ({
       {/* Horizontal Line Price Pill */}
       {drawing.type === 'horizontalLine' && drawing.points[0] && (
         <div className="px-2 py-0.5 bg-slate-900 border border-slate-800 rounded-lg text-[11px] font-mono font-bold text-blue-300 mr-1 shadow-inner">
-          ${drawing.points[0].price.toFixed(2)}
+          ${formatMarketPrice(drawing.points[0].price)}
         </div>
       )}
 

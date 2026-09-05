@@ -34,7 +34,7 @@ export const DEFAULT_CHART_SETTINGS: ChartCustomizationSettings = {
   scaleMode: 'normal',
   scalePosition: 'right',
   showLastPriceLabel: true,
-  showHighLowLabels: true,
+  showHighLowLabels: false,
   showIndicatorLabels: true,
   showPriceLine: true,
   showIndicatorPriceLines: false,
@@ -58,16 +58,31 @@ export const DEFAULT_CHART_SETTINGS: ChartCustomizationSettings = {
   showPositionsOnChart: true,
 };
 
-const STORAGE_KEY = 'bybit_chart_custom_settings';
+const STORAGE_KEY = 'bybit_chart_custom_settings_v4';
+const LEGACY_STORAGE_KEY = 'bybit_chart_custom_settings';
 
 export function getStoredChartSettings(): ChartCustomizationSettings {
   try {
-    const raw = localStorage.getItem(STORAGE_KEY);
+    let raw = localStorage.getItem(STORAGE_KEY);
+    if (!raw) {
+      const legacyRaw = localStorage.getItem(LEGACY_STORAGE_KEY);
+      if (legacyRaw) {
+        const legacyParsed = JSON.parse(legacyRaw);
+        const migrated: ChartCustomizationSettings = {
+          ...DEFAULT_CHART_SETTINGS,
+          ...legacyParsed,
+          showHighLowLabels: false,
+        };
+        saveStoredChartSettings(migrated);
+        return migrated;
+      }
+    }
     if (raw) {
       const parsed = JSON.parse(raw);
       return {
         ...DEFAULT_CHART_SETTINGS,
         ...parsed,
+        showHighLowLabels: parsed.showHighLowLabels ?? false,
         showIndicatorNameLabels: parsed.showIndicatorNameLabels ?? false,
         showIndicatorPriceLines: parsed.showIndicatorPriceLines ?? false,
       };

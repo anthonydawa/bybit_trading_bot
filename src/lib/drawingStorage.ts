@@ -8,7 +8,10 @@ export function getStoredDrawings(symbol: string): Drawing[] {
     if (raw) {
       const parsed = JSON.parse(raw);
       if (Array.isArray(parsed)) {
-        return parsed;
+        return parsed.map((d: any) => ({
+          ...d,
+          lineWidth: d.lineWidth === 2 ? 1 : (d.lineWidth || 1),
+        }));
       }
     }
   } catch (e) {

@@ -86,8 +86,26 @@ export const ChartSettingsModal: React.FC<ChartSettingsModalProps> = ({
     { id: 'trading', label: 'Trading', icon: Zap },
   ];
 
+  // Keyboard Escape listener to dismiss modal
+  React.useEffect(() => {
+    if (!isOpen) return;
+    const handleKeyDown = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') {
+        e.stopPropagation();
+        onClose();
+      }
+    };
+    window.addEventListener('keydown', handleKeyDown);
+    return () => window.removeEventListener('keydown', handleKeyDown);
+  }, [isOpen, onClose]);
+
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/70 backdrop-blur-sm animate-fade-in font-sans select-none">
+    <div
+      onClick={(e) => {
+        if (e.target === e.currentTarget) onClose();
+      }}
+      className="fixed inset-0 z-[100] flex items-center justify-center p-4 bg-black/70 backdrop-blur-sm animate-fade-in font-sans select-none"
+    >
       <div className="flex flex-col w-full max-w-2xl bg-[#1e222d] border border-[#2a2e39] rounded-2xl shadow-2xl overflow-hidden max-h-[88vh]">
         {/* Header */}
         <div className="flex items-center justify-between px-6 py-4 border-b border-[#2a2e39] bg-[#181b24]">

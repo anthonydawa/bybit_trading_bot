@@ -14,6 +14,7 @@ import {
 } from '../../lib/drawingTypes';
 import { Candle } from '../../lib/types';
 import { DrawingFloatingToolbar } from './DrawingFloatingToolbar';
+import { formatMarketPrice } from '../../lib/marketUtils';
 
 interface DrawingOverlayProps {
   chart: IChartApi | null;
@@ -75,25 +76,56 @@ export const DrawingOverlay: React.FC<DrawingOverlayProps> = ({
     };
   }, [chart, forceUpdate]);
 
-  // Coordinate conversion helpers with robust whitespace & logical bar extrapolation
+  // Coordinate conversion helpers with robust multi-timeframe continuous logical interpolation
   const pointToPixel = useCallback(
     (pt: ChartPoint): PixelPoint | null => {
-      if (!chart || !series) return null;
+      if (!chart || !series || !pt || isNaN(pt.time) || isNaN(pt.price)) return null;
       try {
-        let x = chart.timeScale().timeToCoordinate(pt.time as any);
-        // If timestamp is in future whitespace or beyond candles, interpolate logical coordinate:
-        if (x === null && candles.length > 0) {
-          const lastCandle = candles[candles.length - 1];
-          const timeStep = candles.length > 1
-            ? Math.max(1, (candles[candles.length - 1].time - candles[0].time) / (candles.length - 1))
-            : 60;
-          const lastCoord = chart.timeScale().timeToCoordinate(lastCandle.time as any);
-          if (lastCoord !== null) {
-            const lastLogical = chart.timeScale().coordinateToLogical(lastCoord);
-            if (lastLogical !== null) {
-              const logicalDiff = (pt.time - lastCandle.time) / timeStep;
-              x = chart.timeScale().logicalToCoordinate((lastLogical + logicalDiff) as any);
+        const n = candles.length;
+        if (n === 0) return null;
+
+        let x: number | null = null;
+        const timeScale = chart.timeScale();
+
+        if (n === 1) {
+          x = timeScale.timeToCoordinate(candles[0].time as any);
+        } else {
+          const firstTime = candles[0].time;
+          const lastTime = candles[n - 1].time;
+
+          if (pt.time >= firstTime && pt.time <= lastTime) {
+            // Binary search to find idx where candles[idx].time <= pt.time <= candles[idx + 1].time
+            let low = 0;
+            let high = n - 1;
+            while (low <= high) {
+              const mid = (low + high) >> 1;
+              if (candles[mid].time <= pt.time) {
+                low = mid + 1;
+              } else {
+                high = mid - 1;
+              }
             }
+            const idx = Math.max(0, Math.min(n - 2, high));
+            const tA = candles[idx].time;
+            const tB = candles[idx + 1].time;
+            const dt = tB - tA;
+            const fraction = dt > 0 ? (pt.time - tA) / dt : 0;
+            const logical = idx + fraction;
+            x = timeScale.logicalToCoordinate(logical as any);
+          } else if (pt.time > lastTime) {
+            // Future whitespace beyond the last candle
+            const prevTime = candles[Math.max(0, n - 2)].time;
+            const dt = Math.max(1, lastTime - prevTime);
+            const logicalDiff = (pt.time - lastTime) / dt;
+            const logical = (n - 1) + logicalDiff;
+            x = timeScale.logicalToCoordinate(logical as any);
+          } else {
+            // Past whitespace before the first loaded candle
+            const nextTime = candles[Math.min(n - 1, 1)].time;
+            const dt = Math.max(1, nextTime - firstTime);
+            const logicalDiff = (pt.time - firstTime) / dt;
+            const logical = logicalDiff;
+            x = timeScale.logicalToCoordinate(logical as any);
           }
         }
 
@@ -111,26 +143,33 @@ export const DrawingOverlay: React.FC<DrawingOverlayProps> = ({
     (px: PixelPoint): ChartPoint | null => {
       if (!chart || !series) return null;
       try {
-        let time = chart.timeScale().coordinateToTime(px.x) as number | null;
-        // If coordinate is in the future space to the right of latest candle:
-        if ((time === null || isNaN(time)) && candles.length > 0) {
-          const lastCandle = candles[candles.length - 1];
-          const timeStep = candles.length > 1
-            ? Math.max(1, (candles[candles.length - 1].time - candles[0].time) / (candles.length - 1))
-            : 60;
-          const lastCoord = chart.timeScale().timeToCoordinate(lastCandle.time as any);
-          const currentLogical = chart.timeScale().coordinateToLogical(px.x);
-          if (lastCoord !== null && currentLogical !== null) {
-            const lastLogical = chart.timeScale().coordinateToLogical(lastCoord);
-            if (lastLogical !== null) {
-              const logicalDiff = currentLogical - lastLogical;
-              time = Math.round(lastCandle.time + logicalDiff * timeStep);
-            }
-          } else if (currentLogical !== null) {
-            time = Math.round(lastCandle.time + (currentLogical - candles.length) * timeStep);
+        const n = candles.length;
+        if (n === 0) return null;
+
+        let time: number | null = null;
+        const timeScale = chart.timeScale();
+        const logical = timeScale.coordinateToLogical(px.x);
+
+        if (logical !== null && !isNaN(logical)) {
+          if (logical >= 0 && logical < n - 1) {
+            const idx = Math.floor(logical);
+            const fraction = logical - idx;
+            const tA = candles[idx].time;
+            const tB = candles[idx + 1].time;
+            time = Math.round(tA + fraction * (tB - tA));
+          } else if (logical >= n - 1) {
+            const lastCandle = candles[n - 1];
+            const prevCandle = candles[Math.max(0, n - 2)];
+            const dt = Math.max(1, lastCandle.time - prevCandle.time);
+            time = Math.round(lastCandle.time + (logical - (n - 1)) * dt);
           } else {
-            time = lastCandle.time;
+            const firstCandle = candles[0];
+            const nextCandle = candles[Math.min(n - 1, 1)];
+            const dt = Math.max(1, nextCandle.time - firstCandle.time);
+            time = Math.round(firstCandle.time + logical * dt);
           }
+        } else {
+          time = timeScale.coordinateToTime(px.x) as number | null;
         }
 
         const price = series.coordinateToPrice(px.y);
@@ -198,7 +237,7 @@ export const DrawingOverlay: React.FC<DrawingOverlayProps> = ({
           type: 'horizontalLine',
           points: [pt],
           color: '#3b82f6',
-          lineWidth: 2,
+          lineWidth: 1,
           lineStyle: 'solid',
           createdAt: Date.now(),
         });
@@ -237,7 +276,7 @@ export const DrawingOverlay: React.FC<DrawingOverlayProps> = ({
             type: 'trendline',
             points: [p1, p2],
             color: '#3b82f6',
-            lineWidth: 2,
+            lineWidth: 1,
             lineStyle: 'solid',
             showAngle: true,
             extendLeft: false,
@@ -250,7 +289,7 @@ export const DrawingOverlay: React.FC<DrawingOverlayProps> = ({
             type: 'horizontalRay',
             points: [p1, p2],
             color: '#06b6d4',
-            lineWidth: 2,
+            lineWidth: 1,
             lineStyle: 'solid',
             createdAt: Date.now(),
           });
@@ -327,6 +366,25 @@ export const DrawingOverlay: React.FC<DrawingOverlayProps> = ({
     }
   };
 
+  // Persistent refs for smooth dragging without listener re-attachment
+  const drawingsRef = useRef(drawings);
+  drawingsRef.current = drawings;
+
+  const selectedDrawingIdRef = useRef(selectedDrawingId);
+  selectedDrawingIdRef.current = selectedDrawingId;
+
+  const draggedPointIndexRef = useRef(draggedPointIndex);
+  draggedPointIndexRef.current = draggedPointIndex;
+
+  const isDraggingShapeRef = useRef(isDraggingShape);
+  isDraggingShapeRef.current = isDraggingShape;
+
+  const dragStartPosRef = useRef(dragStartPos);
+  dragStartPosRef.current = dragStartPos;
+
+  const dragInitialPointsRef = useRef(dragInitialPoints);
+  dragInitialPointsRef.current = dragInitialPoints;
+
   // Pointer Down on an existing drawing shape
   const handleDrawingPointerDown = (e: React.PointerEvent, drawing: Drawing) => {
     e.stopPropagation();
@@ -336,11 +394,15 @@ export const DrawingOverlay: React.FC<DrawingOverlayProps> = ({
     }
     if (activeTool === 'cursor') {
       setSelectedDrawingId(drawing.id);
-      if (!drawing.locked && !areDrawingsLocked) {
+      selectedDrawingIdRef.current = drawing.id;
+      if (!drawing.locked && !areDrawingsLocked && draggedPointIndexRef.current === null) {
         setIsDraggingShape(true);
+        isDraggingShapeRef.current = true;
         const pos = getPointerPos(e as any);
         setDragStartPos(pos);
+        dragStartPosRef.current = pos;
         setDragInitialPoints([...drawing.points]);
+        dragInitialPointsRef.current = [...drawing.points];
       }
     }
   };
@@ -357,13 +419,15 @@ export const DrawingOverlay: React.FC<DrawingOverlayProps> = ({
         setCurrentAngle(angle);
 
         const p2Point = pixelToPoint(pos);
-        if (p2Point) {
+        if (p2Point && chart) {
           const priceDiff = p2Point.price - inProgressPoints[0].price;
           const percentDiff = inProgressPoints[0].price > 0 ? (priceDiff / inProgressPoints[0].price) * 100 : 0;
+          const l1 = chart.timeScale().coordinateToLogical(p1Pixel.x) ?? 0;
+          const l2 = chart.timeScale().coordinateToLogical(pos.x) ?? 0;
           setCurrentDelta({
             price: Number(priceDiff.toFixed(2)),
             percent: Number(percentDiff.toFixed(2)),
-            bars: Math.abs(Math.round((p2Point.time - inProgressPoints[0].time) / 900)),
+            bars: Math.abs(Math.round(l2 - l1)),
           });
         }
       }
@@ -372,16 +436,22 @@ export const DrawingOverlay: React.FC<DrawingOverlayProps> = ({
 
   const handlePointerUp = () => {
     setIsDraggingShape(false);
+    isDraggingShapeRef.current = false;
     setDraggedPointIndex(null);
+    draggedPointIndexRef.current = null;
     setDragStartPos(null);
+    dragStartPosRef.current = null;
     setDragInitialPoints([]);
+    dragInitialPointsRef.current = [];
   };
 
-  // Window-level listeners for dragging shape or individual handles smoothly
+  // Window-level listeners for dragging shape or individual handles smoothly without tear-down
   useEffect(() => {
-    if (!isDraggingShape && draggedPointIndex === null) return;
+    let rafId: number | null = null;
 
     const handleWindowPointerMove = (e: PointerEvent) => {
+      if (!isDraggingShapeRef.current && draggedPointIndexRef.current === null) return;
+      e.preventDefault();
       const rect = containerRef.current?.getBoundingClientRect();
       if (!rect) return;
       const pos: PixelPoint = {
@@ -389,76 +459,85 @@ export const DrawingOverlay: React.FC<DrawingOverlayProps> = ({
         y: e.clientY - rect.top,
       };
 
-      if (draggedPointIndex !== null && selectedDrawingId) {
-        const pt = pixelToPoint(pos);
-        if (pt) {
-          const sel = drawings.find((d) => d.id === selectedDrawingId);
-          if (sel && !sel.locked) {
-            if (sel.type === 'horizontalLine') {
-              const newPrice = series?.coordinateToPrice(pos.y);
-              if (newPrice !== null && newPrice !== undefined && !isNaN(newPrice)) {
-                onUpdateDrawing(selectedDrawingId, {
-                  points: [{ ...sel.points[0], price: newPrice }],
-                });
-              }
-            } else {
-              const newPoints = [...sel.points];
-              newPoints[draggedPointIndex] = pt;
-              onUpdateDrawing(selectedDrawingId, { points: newPoints });
-            }
-          }
-        }
-      } else if (isDraggingShape && selectedDrawingId && dragStartPos && dragInitialPoints.length > 0) {
-        const sel = drawings.find((d) => d.id === selectedDrawingId);
-        if (sel && !sel.locked) {
+      if (rafId !== null) {
+        cancelAnimationFrame(rafId);
+      }
+
+      rafId = requestAnimationFrame(() => {
+        rafId = null;
+        const selId = selectedDrawingIdRef.current;
+        if (!selId) return;
+        const currentDrawings = drawingsRef.current;
+        const sel = currentDrawings.find((d) => d.id === selId);
+        if (!sel || sel.locked) return;
+
+        const ptIdx = draggedPointIndexRef.current;
+        if (ptIdx !== null) {
           if (sel.type === 'horizontalLine') {
-            const currentPrice = series?.coordinateToPrice(pos.y);
-            if (currentPrice !== null && currentPrice !== undefined && !isNaN(currentPrice)) {
-              onUpdateDrawing(selectedDrawingId, {
-                points: [{ ...dragInitialPoints[0], price: currentPrice }],
+            const newPrice = series?.coordinateToPrice(pos.y);
+            if (newPrice !== null && newPrice !== undefined && !isNaN(newPrice)) {
+              onUpdateDrawing(selId, {
+                points: [{ ...sel.points[0], price: newPrice }],
               });
             }
           } else {
-            const startPoint = pixelToPoint(dragStartPos);
+            const pt = pixelToPoint(pos);
+            if (pt) {
+              const newPoints = [...sel.points];
+              newPoints[ptIdx] = pt;
+              onUpdateDrawing(selId, { points: newPoints });
+            }
+          }
+        } else if (isDraggingShapeRef.current && dragStartPosRef.current && dragInitialPointsRef.current.length > 0) {
+          if (sel.type === 'horizontalLine') {
+            const currentPrice = series?.coordinateToPrice(pos.y);
+            if (currentPrice !== null && currentPrice !== undefined && !isNaN(currentPrice)) {
+              onUpdateDrawing(selId, {
+                points: [{ ...dragInitialPointsRef.current[0], price: currentPrice }],
+              });
+            }
+          } else {
+            const startPoint = pixelToPoint(dragStartPosRef.current);
             const currentPoint = pixelToPoint(pos);
             if (startPoint && currentPoint) {
               const timeDiff = currentPoint.time - startPoint.time;
               const priceDiff = currentPoint.price - startPoint.price;
-              const newPoints = dragInitialPoints.map((pt) => ({
-                time: pt.time + timeDiff,
-                price: pt.price + priceDiff,
+              const newPoints = dragInitialPointsRef.current.map((p) => ({
+                time: p.time + timeDiff,
+                price: p.price + priceDiff,
               }));
-              onUpdateDrawing(selectedDrawingId, { points: newPoints });
+              onUpdateDrawing(selId, { points: newPoints });
             }
           }
         }
-      }
+      });
     };
 
     const handleWindowPointerUp = () => {
-      setIsDraggingShape(false);
-      setDraggedPointIndex(null);
-      setDragStartPos(null);
-      setDragInitialPoints([]);
+      if (rafId !== null) {
+        cancelAnimationFrame(rafId);
+        rafId = null;
+      }
+      if (isDraggingShapeRef.current || draggedPointIndexRef.current !== null) {
+        setIsDraggingShape(false);
+        isDraggingShapeRef.current = false;
+        setDraggedPointIndex(null);
+        draggedPointIndexRef.current = null;
+        setDragStartPos(null);
+        dragStartPosRef.current = null;
+        setDragInitialPoints([]);
+        dragInitialPointsRef.current = [];
+      }
     };
 
-    window.addEventListener('pointermove', handleWindowPointerMove);
+    window.addEventListener('pointermove', handleWindowPointerMove, { passive: false });
     window.addEventListener('pointerup', handleWindowPointerUp);
     return () => {
+      if (rafId !== null) cancelAnimationFrame(rafId);
       window.removeEventListener('pointermove', handleWindowPointerMove);
       window.removeEventListener('pointerup', handleWindowPointerUp);
     };
-  }, [
-    isDraggingShape,
-    draggedPointIndex,
-    selectedDrawingId,
-    dragStartPos,
-    dragInitialPoints,
-    drawings,
-    pixelToPoint,
-    onUpdateDrawing,
-    series,
-  ]);
+  }, [pixelToPoint, onUpdateDrawing, series]);
 
   // Keyboard Shortcuts: Delete/Backspace to delete selected drawing, Escape to deselect/cancel
   useEffect(() => {
@@ -554,6 +633,7 @@ export const DrawingOverlay: React.FC<DrawingOverlayProps> = ({
           // 1. Trendline (with Extend Left / Extend Right ray math)
           if (drawing.type === 'trendline' && pixels.length >= 2) {
             const svgWidth = containerRef.current?.clientWidth || 1200;
+            const svgHeight = containerRef.current?.clientHeight || 800;
             let startX = pixels[0].x;
             let startY = pixels[0].y;
             let endX = pixels[1].x;
@@ -562,32 +642,35 @@ export const DrawingOverlay: React.FC<DrawingOverlayProps> = ({
             const dx = pixels[1].x - pixels[0].x;
             const dy = pixels[1].y - pixels[0].y;
 
-            if (Math.abs(dx) > 0.0001) {
-              const slope = dy / dx;
-              const isP0Left = pixels[0].x <= pixels[1].x;
-              const pLeft = isP0Left ? pixels[0] : pixels[1];
-              const pRight = isP0Left ? pixels[1] : pixels[0];
-
-              if (drawing.extendLeft) {
-                const targetLeftX = -500;
-                const targetLeftY = pLeft.y + slope * (targetLeftX - pLeft.x);
-                if (isP0Left) {
-                  startX = targetLeftX;
-                  startY = targetLeftY;
-                } else {
-                  endX = targetLeftX;
-                  endY = targetLeftY;
+            if (drawing.extendLeft || drawing.extendRight) {
+              if (Math.abs(dx) >= 0.5) {
+                const slope = dy / dx;
+                if (drawing.extendLeft) {
+                  const targetX = -200;
+                  if (pixels[0].x <= pixels[1].x) {
+                    startX = targetX;
+                    startY = pixels[0].y + slope * (targetX - pixels[0].x);
+                  } else {
+                    endX = targetX;
+                    endY = pixels[1].y + slope * (targetX - pixels[1].x);
+                  }
                 }
-              }
-              if (drawing.extendRight) {
-                const targetRightX = svgWidth + 500;
-                const targetRightY = pRight.y + slope * (targetRightX - pRight.x);
-                if (isP0Left) {
-                  endX = targetRightX;
-                  endY = targetRightY;
-                } else {
-                  startX = targetRightX;
-                  startY = targetRightY;
+                if (drawing.extendRight) {
+                  const targetX = svgWidth + 200;
+                  if (pixels[1].x >= pixels[0].x) {
+                    endX = targetX;
+                    endY = pixels[1].y + slope * (targetX - pixels[1].x);
+                  } else {
+                    startX = targetX;
+                    startY = pixels[0].y + slope * (targetX - pixels[0].x);
+                  }
+                }
+              } else {
+                if (drawing.extendLeft) {
+                  startY = dy >= 0 ? -200 : svgHeight + 200;
+                }
+                if (drawing.extendRight) {
+                  endY = dy >= 0 ? svgHeight + 200 : -200;
                 }
               }
             }
@@ -618,7 +701,7 @@ export const DrawingOverlay: React.FC<DrawingOverlayProps> = ({
                   x2={endX}
                   y2={endY}
                   stroke={drawing.color}
-                  strokeWidth={isSelected ? drawing.lineWidth + 1 : drawing.lineWidth}
+                  strokeWidth={drawing.lineWidth}
                   strokeDasharray={strokeDash}
                 />
                 {/* Angle & Info Badge */}
@@ -637,7 +720,7 @@ export const DrawingOverlay: React.FC<DrawingOverlayProps> = ({
           // 2. Horizontal Line (Support / Resistance Across Full Chart Width)
           if (drawing.type === 'horizontalLine' && pixels.length >= 1) {
             const yCoord = series ? (series.priceToCoordinate(drawing.points[0]?.price) ?? pixels[0].y) : pixels[0].y;
-            const priceStr = drawing.points[0]?.price?.toFixed(2) ?? '0.00';
+            const priceStr = formatMarketPrice(drawing.points[0]?.price);
             const svgWidth = containerRef.current?.clientWidth || 1000;
             const badgeX = Math.min(Math.max(pixels[0].x, 80), svgWidth - 120);
 
@@ -663,7 +746,7 @@ export const DrawingOverlay: React.FC<DrawingOverlayProps> = ({
                   x2="100%"
                   y2={yCoord}
                   stroke={drawing.color}
-                  strokeWidth={isSelected ? drawing.lineWidth + 1 : drawing.lineWidth}
+                  strokeWidth={drawing.lineWidth}
                   strokeDasharray={strokeDash}
                 />
                 {/* Price scale badge */}
@@ -700,7 +783,7 @@ export const DrawingOverlay: React.FC<DrawingOverlayProps> = ({
                   x2="100%"
                   y2={yCoord}
                   stroke={drawing.color}
-                  strokeWidth={isSelected ? drawing.lineWidth + 1 : drawing.lineWidth}
+                  strokeWidth={drawing.lineWidth}
                   strokeDasharray={strokeDash}
                 />
               </g>
@@ -729,7 +812,7 @@ export const DrawingOverlay: React.FC<DrawingOverlayProps> = ({
                   x2={pixels[0].x}
                   y2="100%"
                   stroke={drawing.color}
-                  strokeWidth={isSelected ? drawing.lineWidth + 1 : drawing.lineWidth}
+                  strokeWidth={drawing.lineWidth}
                   strokeDasharray={strokeDash}
                 />
               </g>
@@ -757,7 +840,7 @@ export const DrawingOverlay: React.FC<DrawingOverlayProps> = ({
                   fill={drawing.color}
                   fillOpacity={0.15}
                   stroke={drawing.color}
-                  strokeWidth={isSelected ? drawing.lineWidth + 1 : drawing.lineWidth}
+                  strokeWidth={drawing.lineWidth}
                   strokeDasharray={strokeDash}
                   rx={4}
                 />
@@ -972,46 +1055,94 @@ export const DrawingOverlay: React.FC<DrawingOverlayProps> = ({
         (selectedDrawing.type === 'horizontalLine' ? (
           (() => {
             const y = series ? (series.priceToCoordinate(selectedDrawing.points[0]?.price) ?? selectedPixels[0]?.y) : selectedPixels[0]?.y;
-            if (y === undefined || y === null) return null;
+            if (y === undefined || y === null || isNaN(y)) return null;
             const svgWidth = containerRef.current?.clientWidth || 800;
+            const isDraggingThis = draggedPointIndex === 0;
             return (
-              <circle
+              <g
                 key="handle-hline-center"
-                cx={svgWidth / 2}
-                cy={y}
-                r={6}
-                fill="#ffffff"
-                stroke="#3b82f6"
-                strokeWidth={2}
-                className="pointer-events-auto cursor-ns-resize hover:scale-125 transition-transform"
+                className="cursor-ns-resize select-none"
                 onPointerDown={(e) => {
                   e.stopPropagation();
+                  e.preventDefault();
+                  setIsDraggingShape(false);
+                  isDraggingShapeRef.current = false;
+                  setDragStartPos(null);
+                  dragStartPosRef.current = null;
+                  setDragInitialPoints([]);
+                  dragInitialPointsRef.current = [];
+                  draggedPointIndexRef.current = 0;
                   setDraggedPointIndex(0);
                 }}
-              />
+              >
+                {/* Wide invisible hit area (28px) */}
+                <circle
+                  cx={svgWidth / 2}
+                  cy={y}
+                  r={14}
+                  fill="transparent"
+                  className="pointer-events-auto cursor-ns-resize"
+                />
+                {/* Crisp visual control point */}
+                <circle
+                  cx={svgWidth / 2}
+                  cy={y}
+                  r={isDraggingThis ? 6.5 : 5}
+                  fill={isDraggingThis ? '#3b82f6' : '#ffffff'}
+                  stroke={isDraggingThis ? '#ffffff' : '#2563eb'}
+                  strokeWidth={2}
+                  className="pointer-events-none drop-shadow"
+                />
+              </g>
             );
           })()
         ) : (
-          selectedPixels.map((pt, idx) => (
-            <circle
-              key={`handle-${idx}`}
-              cx={pt.x}
-              cy={pt.y}
-              r={6}
-              fill="#ffffff"
-              stroke="#3b82f6"
-              strokeWidth={2}
-              className="pointer-events-auto cursor-move hover:scale-125 transition-transform"
-              onPointerDown={(e) => {
-                e.stopPropagation();
-                setDraggedPointIndex(idx);
-              }}
-            />
-          ))
+          selectedDrawing.points.map((pt, idx) => {
+            const pixel = pointToPixel(pt);
+            if (!pixel) return null;
+            const isDraggingThis = draggedPointIndex === idx;
+            return (
+              <g
+                key={`handle-${idx}`}
+                className="cursor-move select-none"
+                onPointerDown={(e) => {
+                  e.stopPropagation();
+                  e.preventDefault();
+                  setIsDraggingShape(false);
+                  isDraggingShapeRef.current = false;
+                  setDragStartPos(null);
+                  dragStartPosRef.current = null;
+                  setDragInitialPoints([]);
+                  dragInitialPointsRef.current = [];
+                  draggedPointIndexRef.current = idx;
+                  setDraggedPointIndex(idx);
+                }}
+              >
+                {/* Wide invisible hit area (28px) */}
+                <circle
+                  cx={pixel.x}
+                  cy={pixel.y}
+                  r={14}
+                  fill="transparent"
+                  className="pointer-events-auto cursor-move"
+                />
+                {/* Crisp visual control point */}
+                <circle
+                  cx={pixel.x}
+                  cy={pixel.y}
+                  r={isDraggingThis ? 6.5 : 5}
+                  fill={isDraggingThis ? '#3b82f6' : '#ffffff'}
+                  stroke={isDraggingThis ? '#ffffff' : '#2563eb'}
+                  strokeWidth={2}
+                  className="pointer-events-none drop-shadow"
+                />
+              </g>
+            );
+          })
         ))}
 
-      {/* FLOATING ACTION TOOLBAR FOR SELECTED DRAWING */}
-      {selectedDrawing && toolbarPos && (
+      {/* FLOATING ACTION TOOLBAR FOR SELECTED DRAWING (Hidden during active drag for clean UX) */}
+      {selectedDrawing && toolbarPos && !isDraggingShape && draggedPointIndex === null && (
         <foreignObject
           x={0}
           y={0}

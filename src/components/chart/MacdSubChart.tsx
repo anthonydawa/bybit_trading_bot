@@ -81,7 +81,7 @@ export const MacdSubChart: React.FC<MacdSubChartProps> = ({
     // MACD Line Series (Cyan)
     const macdSeries = chart.addLineSeries({
       color: '#06b6d4',
-      lineWidth: 2,
+      lineWidth: 1,
       priceFormat: { type: 'custom', formatter: (val: number) => val.toFixed(2) },
     });
     macdSeriesRef.current = macdSeries;

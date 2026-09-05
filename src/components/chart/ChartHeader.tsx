@@ -20,6 +20,7 @@ import {
 } from 'lucide-react';
 import { IndicatorSettings, TickerInfo, ChartStyleType, OHLCData } from '../../lib/types';
 import { AllIndicatorConfigs, DEFAULT_INDICATOR_CONFIGS } from '../../lib/indicatorConfig';
+import { formatMarketPrice } from '../../lib/marketUtils';
 
 interface ChartHeaderProps {
   symbol: string;
@@ -135,7 +136,7 @@ export const ChartHeader: React.FC<ChartHeaderProps> = ({
             <div className="flex items-center gap-3 text-xs font-mono">
               <div className="flex items-baseline gap-1.5">
                 <span className={`text-base font-bold ${isPositive ? 'text-emerald-400' : 'text-rose-400'}`}>
-                  ${ticker.lastPrice?.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 4 })}
+                  ${formatMarketPrice(ticker.lastPrice, symbol)}
                 </span>
                 <span className={`flex items-center gap-0.5 text-[11px] font-medium px-1.5 py-0.2 rounded ${
                   isPositive ? 'bg-emerald-500/10 text-emerald-400' : 'bg-rose-500/10 text-rose-400'
@@ -148,11 +149,11 @@ export const ChartHeader: React.FC<ChartHeaderProps> = ({
               <div className="hidden xl:flex items-center gap-3 text-slate-400 border-l border-slate-800 pl-3 text-[11px]">
                 <div>
                   <span className="text-slate-500 block text-[9px]">24h High</span>
-                  <span className="text-slate-200">${ticker.highPrice24h?.toLocaleString()}</span>
+                  <span className="text-slate-200">${formatMarketPrice(ticker.highPrice24h, symbol)}</span>
                 </div>
                 <div>
                   <span className="text-slate-500 block text-[9px]">24h Low</span>
-                  <span className="text-slate-200">${ticker.lowPrice24h?.toLocaleString()}</span>
+                  <span className="text-slate-200">${formatMarketPrice(ticker.lowPrice24h, symbol)}</span>
                 </div>
                 <div>
                   <span className="text-slate-500 block text-[9px]">24h Volume</span>
@@ -353,24 +354,24 @@ export const ChartHeader: React.FC<ChartHeaderProps> = ({
           <div className="flex items-center gap-3">
             <span>
               <span className="text-slate-500 mr-1 font-sans">O</span>
-              <span className="text-slate-200">${hoverOhlc.open?.toFixed(2)}</span>
+              <span className="text-slate-200">${formatMarketPrice(hoverOhlc.open, symbol)}</span>
             </span>
             <span>
               <span className="text-slate-500 mr-1 font-sans">H</span>
-              <span className="text-slate-200">${hoverOhlc.high?.toFixed(2)}</span>
+              <span className="text-slate-200">${formatMarketPrice(hoverOhlc.high, symbol)}</span>
             </span>
             <span>
               <span className="text-slate-500 mr-1 font-sans">L</span>
-              <span className="text-slate-200">${hoverOhlc.low?.toFixed(2)}</span>
+              <span className="text-slate-200">${formatMarketPrice(hoverOhlc.low, symbol)}</span>
             </span>
             <span>
               <span className="text-slate-500 mr-1 font-sans">C</span>
               <span className={hoverOhlc.close >= hoverOhlc.open ? 'text-emerald-400' : 'text-rose-400'}>
-                ${hoverOhlc.close?.toFixed(2)}
+                ${formatMarketPrice(hoverOhlc.close, symbol)}
               </span>
             </span>
             <span className={`font-semibold ${hoverOhlc.change >= 0 ? 'text-emerald-400' : 'text-rose-400'}`}>
-              {hoverOhlc.change >= 0 ? '+' : ''}{hoverOhlc.change?.toFixed(2)} ({hoverOhlc.changePercent?.toFixed(2)}%)
+              {hoverOhlc.change >= 0 ? '+' : ''}{formatMarketPrice(hoverOhlc.change, symbol)} ({hoverOhlc.changePercent?.toFixed(2)}%)
             </span>
             <span>
               <span className="text-slate-500 mr-1 font-sans">Vol</span>

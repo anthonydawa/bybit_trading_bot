@@ -1,6 +1,7 @@
-import React, { useState, useMemo } from 'react';
+import React, { useState, useMemo, useEffect } from 'react';
 import { Search, Star, TrendingUp, TrendingDown, X, Flame } from 'lucide-react';
 import { TickerInfo } from '../../lib/types';
+import { formatMarketPrice } from '../../lib/marketUtils';
 
 interface TickerSelectorProps {
   isOpen: boolean;
@@ -47,10 +48,28 @@ export const TickerSelector: React.FC<TickerSelectorProps> = ({
     return list;
   }, [tickers, search, tab, favorites]);
 
+  // Keyboard Escape listener to dismiss modal
+  useEffect(() => {
+    if (!isOpen) return;
+    const handleKeyDown = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') {
+        e.stopPropagation();
+        onClose();
+      }
+    };
+    window.addEventListener('keydown', handleKeyDown);
+    return () => window.removeEventListener('keydown', handleKeyDown);
+  }, [isOpen, onClose]);
+
   if (!isOpen) return null;
 
   return (
-    <div className="fixed inset-0 bg-black/75 backdrop-blur-sm flex items-center justify-center z-50 p-4 animate-fade-in">
+    <div
+      onClick={(e) => {
+        if (e.target === e.currentTarget) onClose();
+      }}
+      className="fixed inset-0 bg-black/75 backdrop-blur-sm flex items-center justify-center z-[100] p-4 animate-fade-in"
+    >
       <div className="bg-[#0d131f] border border-slate-700/80 rounded-2xl w-full max-w-2xl max-h-[85vh] flex flex-col shadow-2xl overflow-hidden">
         {/* Modal Header */}
         <div className="p-4 border-b border-slate-800 flex items-center justify-between">
@@ -155,7 +174,7 @@ export const TickerSelector: React.FC<TickerSelectorProps> = ({
 
                   <div className="text-right font-mono">
                     <div className="text-sm font-semibold text-slate-100">
-                      ${t.lastPrice?.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 4 })}
+                      ${formatMarketPrice(t.lastPrice, t.symbol)}
                     </div>
                     <div className={`text-xs flex items-center justify-end gap-0.5 ${isPos ? 'text-emerald-400' : 'text-rose-400'}`}>
                       {isPos ? <TrendingUp className="w-3 h-3" /> : <TrendingDown className="w-3 h-3" />}

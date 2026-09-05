@@ -1,10 +1,12 @@
 import React, { useState, useMemo, useRef, useEffect } from 'react';
 import { ChevronRight, TrendingUp, TrendingDown, Layers } from 'lucide-react';
 import { OrderBookData, OrderBookEntry } from '../../lib/types';
+import { getMarketPrecision, formatMarketPrice, formatMarketQty } from '../../lib/marketUtils';
 
 interface OrderBookProps {
   orderBook: OrderBookData;
   currentPrice: number;
+  symbol?: string;
   onClose?: () => void;
   onSelectPrice?: (price: number) => void;
 }
@@ -14,6 +16,7 @@ type OrderBookViewMode = 'both' | 'bids' | 'asks';
 export const OrderBook: React.FC<OrderBookProps> = ({
   orderBook,
   currentPrice,
+  symbol,
   onClose,
   onSelectPrice,
 }) => {
@@ -62,26 +65,42 @@ export const OrderBook: React.FC<OrderBookProps> = ({
     return () => observer.disconnect();
   }, [viewMode]);
 
-  // Determine tick grouping options based on current price magnitude
+  // Market-specific precision and tick size specs
+  const marketInfo = useMemo(() => {
+    return getMarketPrecision(symbol || '', currentPrice);
+  }, [symbol, currentPrice]);
+
+  // Determine dynamic tick grouping options based on market tick size
   const tickOptions = useMemo(() => {
-    if (!currentPrice || currentPrice >= 1000) return ['0.1', '0.5', '1', '5', '10'];
-    if (currentPrice >= 1) return ['0.01', '0.05', '0.1', '0.5', '1'];
-    return ['0.0001', '0.001', '0.01', '0.1'];
-  }, [currentPrice]);
+    const base = marketInfo.tickSize || 0.01;
+    const multipliers = [1, 2, 5, 10, 50];
+    const dec = marketInfo.precision;
+    return multipliers.map((m) => {
+      const val = base * m;
+      return parseFloat(val.toFixed(dec)).toString();
+    });
+  }, [marketInfo]);
 
   const [tickSize, setTickSize] = useState<string>(tickOptions[0]);
 
+  // Ensure tick size updates if market changes
+  useEffect(() => {
+    if (tickOptions.length > 0 && !tickOptions.includes(tickSize)) {
+      setTickSize(tickOptions[0]);
+    }
+  }, [tickOptions, tickSize]);
+
   // Aggregate orderbook according to selected tick size
   const aggregateOrders = (orders: OrderBookEntry[], isAsk: boolean): OrderBookEntry[] => {
-    const step = parseFloat(tickSize) || 0.1;
-    if (step <= 0.000001) return orders;
+    const step = parseFloat(tickSize) || marketInfo.tickSize || 0.01;
+    if (step <= 0) return orders;
 
     const grouped = new Map<number, number>();
     for (const item of orders) {
       const bucket = isAsk
         ? Math.ceil(item.price / step) * step
         : Math.floor(item.price / step) * step;
-      const roundedBucket = parseFloat(bucket.toFixed(6));
+      const roundedBucket = parseFloat(bucket.toFixed(marketInfo.precision + 2));
       grouped.set(roundedBucket, (grouped.get(roundedBucket) || 0) + item.size);
     }
 
@@ -134,10 +153,7 @@ export const OrderBook: React.FC<OrderBookProps> = ({
   // Formatting helpers
   const formatPrice = (p: number) => {
     if (!p) return '--';
-    if (p >= 1000) return p.toFixed(2);
-    if (p >= 1) return p.toFixed(3);
-    if (p >= 0.01) return p.toFixed(4);
-    return p.toFixed(6);
+    return formatMarketPrice(p, symbol);
   };
 
   const formatSize = (s: number) => {
@@ -302,8 +318,8 @@ export const OrderBook: React.FC<OrderBookProps> = ({
         </div>
 
         <div className="flex items-center gap-2 text-[10px] text-slate-400 font-mono">
-          <span title={`Spread: $${spread.toFixed(2)} (${spreadPercent.toFixed(2)}%)`}>
-            Sprd {spread.toFixed(2)}
+          <span title={`Spread: $${formatMarketPrice(spread, symbol)} (${spreadPercent.toFixed(2)}%)`}>
+            Sprd {formatMarketPrice(spread, symbol)}
           </span>
         </div>
       </div>

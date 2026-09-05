@@ -1,5 +1,7 @@
 import axios from 'axios';
 import { Candle, TickerInfo, OrderBookData, Strategy, OrderFormData, AiCritiqueResult } from './types';
+import { sanitizeCandles } from './klineCache';
+import { formatMarketPrice } from './marketUtils';
 
 // Preset Strategies for Instant Zero-Config Client-Side Loading
 export const PRESET_STRATEGIES: Strategy[] = [
@@ -121,7 +123,7 @@ class ApiClient {
     try {
       const res = await axios.get(`/api/bybit/klines?symbol=${symbol}&interval=${interval}&limit=${limit}`, { timeout: 4000 });
       if (res.data?.success && res.data?.data?.list) {
-        return this.parseKlineList(res.data.data.list);
+        return this.parseKlineList(res.data.data.list, interval);
       }
     } catch (e) {
       // Fall through to direct Bybit
@@ -134,7 +136,7 @@ class ApiClient {
         { timeout: 8000 }
       );
       if (res.data?.result?.list) {
-        return this.parseKlineList(res.data.result.list);
+        return this.parseKlineList(res.data.result.list, interval);
       }
     } catch (e) {
       console.warn(`Failed to fetch Bybit klines directly for ${symbol}:`, e);
@@ -142,16 +144,21 @@ class ApiClient {
     return [];
   }
 
-  private parseKlineList(rawList: any[]): Candle[] {
+  private parseKlineList(rawList: any[], interval?: string): Candle[] {
+    if (!Array.isArray(rawList) || rawList.length === 0) return [];
     // Bybit returns newest first, reverse for chronological order
-    return rawList.map((item: any) => ({
-      time: Math.floor(Number(item[0]) / 1000),
-      open: parseFloat(item[1]),
-      high: parseFloat(item[2]),
-      low: parseFloat(item[3]),
-      close: parseFloat(item[4]),
-      volume: parseFloat(item[5]),
-    })).reverse();
+    const candles: Candle[] = rawList
+      .filter((item) => Array.isArray(item) && item.length >= 6)
+      .map((item: any) => ({
+        time: Math.floor(Number(item[0]) / 1000),
+        open: parseFloat(item[1]),
+        high: parseFloat(item[2]),
+        low: parseFloat(item[3]),
+        close: parseFloat(item[4]),
+        volume: parseFloat(item[5]) || 0,
+      }));
+
+    return sanitizeCandles(candles, interval);
   }
 
   /**
@@ -309,7 +316,7 @@ class ApiClient {
         {
           criterion: "Stop Loss Protection",
           status: order.stopLoss ? "PASS" : "WARNING",
-          details: order.stopLoss ? `Stop Loss secured at $${Number(order.stopLoss).toFixed(2)}.` : "Set a defined Stop Loss before entry."
+          details: order.stopLoss ? `Stop Loss secured at $${formatMarketPrice(order.stopLoss, order.symbol)}.` : "Set a defined Stop Loss before entry."
         },
         {
           criterion: "Trend Alignment",

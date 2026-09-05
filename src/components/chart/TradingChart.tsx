@@ -1,4 +1,4 @@
-import React, { useEffect, useRef, forwardRef, useImperativeHandle, useState, useCallback } from 'react';
+import React, { useEffect, useRef, forwardRef, useImperativeHandle, useState, useCallback, useMemo } from 'react';
 import {
   createChart,
   IChartApi,
@@ -12,7 +12,7 @@ import {
   LineStyle,
   PriceScaleMode,
 } from 'lightweight-charts';
-import { Settings, Eye, RotateCcw, Maximize2, Minimize2 } from 'lucide-react';
+import { Settings, Eye, EyeOff, X, ChevronDown, ChevronRight, RotateCcw, Maximize2, Minimize2 } from 'lucide-react';
 import { Candle, IndicatorSettings, ChartStyleType, OHLCData } from '../../lib/types';
 import {
   AllIndicatorConfigs,
@@ -43,6 +43,7 @@ import { DrawingOverlay } from './DrawingOverlay';
 import { RsiSubChart } from './RsiSubChart';
 import { MacdSubChart } from './MacdSubChart';
 import { ChartScaleMenu } from './ChartScaleMenu';
+import { getMarketPrecision, formatMarketPrice } from '../../lib/marketUtils';
 import { ChartSettingsModal } from './ChartSettingsModal';
 
 export interface TradingChartRef {
@@ -133,6 +134,84 @@ export const TradingChart = forwardRef<TradingChartRef, TradingChartProps>(({
   const [isMagnetEnabled, setIsMagnetEnabled] = useState<boolean>(false);
   const [areDrawingsHidden, setAreDrawingsHidden] = useState<boolean>(false);
   const [areDrawingsLocked, setAreDrawingsLocked] = useState<boolean>(false);
+
+  // Market step size and price precision (dynamic per instrument)
+  const { precision: marketPrecision, minMove: marketMinMove } = useMemo(
+    () => getMarketPrecision(symbol, candles.length > 0 ? candles[candles.length - 1].close : undefined, candles),
+    [symbol, candles]
+  );
+
+  const effectivePrecision = settings.precision !== 'default'
+    ? Number(settings.precision)
+    : marketPrecision;
+
+  const effectiveMinMove = settings.precision !== 'default'
+    ? 1 / Math.pow(10, effectivePrecision)
+    : marketMinMove;
+
+  // TradingView Style Indicator Legend States
+  const [hiddenIndicators, setHiddenIndicators] = useState<Set<string>>(new Set());
+  const [isLegendCollapsed, setIsLegendCollapsed] = useState<boolean>(false);
+  const [crosshairIndicatorValues, setCrosshairIndicatorValues] = useState<Record<string, any> | null>(null);
+
+  const toggleIndicatorVisibility = useCallback((key: string) => {
+    setHiddenIndicators((prev) => {
+      const next = new Set(prev);
+      if (next.has(key)) {
+        next.delete(key);
+      } else {
+        next.add(key);
+      }
+      return next;
+    });
+  }, []);
+
+  // Compute latest indicator values from candle data
+  const latestIndicatorValues = useMemo(() => {
+    if (!candles || candles.length === 0) return {};
+    const vals: Record<string, any> = {};
+
+    try {
+      if (indicatorConfigs.ema9?.enabled) {
+        const d = calculateEMA(candles, indicatorConfigs.ema9.period || 9);
+        if (d.length > 0) vals.ema9 = d[d.length - 1].value;
+      }
+      if (indicatorConfigs.ema20?.enabled) {
+        const d = calculateEMA(candles, indicatorConfigs.ema20.period || 20);
+        if (d.length > 0) vals.ema20 = d[d.length - 1].value;
+      }
+      if (indicatorConfigs.ema50?.enabled) {
+        const d = calculateEMA(candles, indicatorConfigs.ema50.period || 50);
+        if (d.length > 0) vals.ema50 = d[d.length - 1].value;
+      }
+      if (indicatorConfigs.ema200?.enabled) {
+        const d = calculateEMA(candles, indicatorConfigs.ema200.period || 200);
+        if (d.length > 0) vals.ema200 = d[d.length - 1].value;
+      }
+      if (indicatorConfigs.bollinger?.enabled) {
+        const d = calculateBollingerBands(
+          candles,
+          indicatorConfigs.bollinger.period || 20,
+          indicatorConfigs.bollinger.stdDev || 2
+        );
+        if (d.length > 0) vals.bollinger = d[d.length - 1];
+      }
+      if (indicatorConfigs.supertrend?.enabled) {
+        const d = calculateSupertrend(
+          candles,
+          indicatorConfigs.supertrend.period || 10,
+          indicatorConfigs.supertrend.multiplier || 3
+        );
+        if (d.length > 0) vals.supertrend = d[d.length - 1].value;
+      }
+    } catch (e) {
+      console.warn('Error calculating indicator values:', e);
+    }
+
+    return vals;
+  }, [candles, indicatorConfigs]);
+
+  const currentIndicatorValues = crosshairIndicatorValues || latestIndicatorValues;
 
   // Live countdown to active candle close
   useEffect(() => {
@@ -226,6 +305,8 @@ export const TradingChart = forwardRef<TradingChartRef, TradingChartProps>(({
   }, [symbol]);
 
   // Drawing Mutation Handlers
+  const saveDebounceRef = useRef<any>(null);
+
   const handleAddDrawing = (newDrawing: Drawing) => {
     setDrawings((prev) => {
       const updated = [...prev, newDrawing];
@@ -237,7 +318,10 @@ export const TradingChart = forwardRef<TradingChartRef, TradingChartProps>(({
   const handleUpdateDrawing = (id: string, patch: Partial<Drawing>) => {
     setDrawings((prev) => {
       const updated = prev.map((d) => (d.id === id ? ({ ...d, ...patch } as Drawing) : d));
-      saveStoredDrawings(symbol, updated);
+      if (saveDebounceRef.current) clearTimeout(saveDebounceRef.current);
+      saveDebounceRef.current = setTimeout(() => {
+        saveStoredDrawings(symbol, updated);
+      }, 300);
       return updated;
     });
   };
@@ -422,12 +506,19 @@ export const TradingChart = forwardRef<TradingChartRef, TradingChartProps>(({
 
     chartRef.current = chart;
 
+    const priceFormatConfig = {
+      type: 'price' as const,
+      precision: effectivePrecision,
+      minMove: effectiveMinMove,
+    };
+
     // Create Main Price Series based on Chart Style
     let mainSeries: ISeriesApi<any>;
     if (chartStyle === 'line') {
       mainSeries = chart.addLineSeries({
         color: '#3b82f6',
-        lineWidth: 2,
+        lineWidth: 1,
+        priceFormat: priceFormatConfig,
         lastValueVisible: settings.showLastPriceLabel,
         priceLineVisible: settings.showPriceLine,
       });
@@ -436,7 +527,8 @@ export const TradingChart = forwardRef<TradingChartRef, TradingChartProps>(({
         topColor: 'rgba(59, 130, 246, 0.4)',
         bottomColor: 'rgba(59, 130, 246, 0.0)',
         lineColor: '#3b82f6',
-        lineWidth: 2,
+        lineWidth: 1,
+        priceFormat: priceFormatConfig,
         lastValueVisible: settings.showLastPriceLabel,
         priceLineVisible: settings.showPriceLine,
       });
@@ -444,6 +536,7 @@ export const TradingChart = forwardRef<TradingChartRef, TradingChartProps>(({
       mainSeries = chart.addBarSeries({
         upColor: settings.candleUpColor,
         downColor: settings.candleDownColor,
+        priceFormat: priceFormatConfig,
         lastValueVisible: settings.showLastPriceLabel,
         priceLineVisible: settings.showPriceLine,
       });
@@ -458,6 +551,7 @@ export const TradingChart = forwardRef<TradingChartRef, TradingChartProps>(({
         borderDownColor: settings.candleBorderDownColor,
         wickUpColor: settings.wickColorUp,
         wickDownColor: settings.wickColorDown,
+        priceFormat: priceFormatConfig,
         lastValueVisible: settings.showLastPriceLabel,
         priceLineVisible: settings.showPriceLine,
       });
@@ -484,6 +578,7 @@ export const TradingChart = forwardRef<TradingChartRef, TradingChartProps>(({
       lineStyle: getLineStyle(indicatorConfigs.ema9.lineStyle),
       title: settings.showIndicatorNameLabels ? 'EMA 9' : '',
       priceLineVisible: settings.showIndicatorPriceLines,
+      priceFormat: priceFormatConfig,
     });
 
     ema20SeriesRef.current = chart.addLineSeries({
@@ -492,6 +587,7 @@ export const TradingChart = forwardRef<TradingChartRef, TradingChartProps>(({
       lineStyle: getLineStyle(indicatorConfigs.ema20.lineStyle),
       title: settings.showIndicatorNameLabels ? 'EMA 20' : '',
       priceLineVisible: settings.showIndicatorPriceLines,
+      priceFormat: priceFormatConfig,
     });
 
     ema50SeriesRef.current = chart.addLineSeries({
@@ -500,6 +596,7 @@ export const TradingChart = forwardRef<TradingChartRef, TradingChartProps>(({
       lineStyle: getLineStyle(indicatorConfigs.ema50.lineStyle),
       title: settings.showIndicatorNameLabels ? 'EMA 50' : '',
       priceLineVisible: settings.showIndicatorPriceLines,
+      priceFormat: priceFormatConfig,
     });
 
     ema200SeriesRef.current = chart.addLineSeries({
@@ -508,6 +605,7 @@ export const TradingChart = forwardRef<TradingChartRef, TradingChartProps>(({
       lineStyle: getLineStyle(indicatorConfigs.ema200.lineStyle),
       title: settings.showIndicatorNameLabels ? 'EMA 200' : '',
       priceLineVisible: settings.showIndicatorPriceLines,
+      priceFormat: priceFormatConfig,
     });
 
     bbUpperSeriesRef.current = chart.addLineSeries({
@@ -516,6 +614,7 @@ export const TradingChart = forwardRef<TradingChartRef, TradingChartProps>(({
       lineStyle: getLineStyle(indicatorConfigs.bollinger.lineStyle),
       title: settings.showIndicatorNameLabels ? 'BB Upper' : '',
       priceLineVisible: settings.showIndicatorPriceLines,
+      priceFormat: priceFormatConfig,
     });
 
     bbMiddleSeriesRef.current = chart.addLineSeries({
@@ -524,6 +623,7 @@ export const TradingChart = forwardRef<TradingChartRef, TradingChartProps>(({
       lineStyle: LineStyle.Dashed,
       title: settings.showIndicatorNameLabels ? 'BB Mid' : '',
       priceLineVisible: settings.showIndicatorPriceLines,
+      priceFormat: priceFormatConfig,
     });
 
     bbLowerSeriesRef.current = chart.addLineSeries({
@@ -532,6 +632,7 @@ export const TradingChart = forwardRef<TradingChartRef, TradingChartProps>(({
       lineStyle: getLineStyle(indicatorConfigs.bollinger.lineStyle),
       title: settings.showIndicatorNameLabels ? 'BB Lower' : '',
       priceLineVisible: settings.showIndicatorPriceLines,
+      priceFormat: priceFormatConfig,
     });
 
     supertrendSeriesRef.current = chart.addLineSeries({
@@ -540,6 +641,7 @@ export const TradingChart = forwardRef<TradingChartRef, TradingChartProps>(({
       lineStyle: getLineStyle(indicatorConfigs.supertrend.lineStyle),
       title: settings.showIndicatorNameLabels ? 'Supertrend' : '',
       priceLineVisible: settings.showIndicatorPriceLines,
+      priceFormat: priceFormatConfig,
     });
 
     // Crosshair hover listener for Real-Time Floating OHLCV
@@ -566,8 +668,41 @@ export const TradingChart = forwardRef<TradingChartRef, TradingChartProps>(({
             });
           }
         }
+
+        // Extract active indicator values at crosshair location
+        const hovered: Record<string, any> = {};
+        if (ema9SeriesRef.current) {
+          const d = param.seriesData.get(ema9SeriesRef.current) as any;
+          if (d?.value != null) hovered.ema9 = d.value;
+        }
+        if (ema20SeriesRef.current) {
+          const d = param.seriesData.get(ema20SeriesRef.current) as any;
+          if (d?.value != null) hovered.ema20 = d.value;
+        }
+        if (ema50SeriesRef.current) {
+          const d = param.seriesData.get(ema50SeriesRef.current) as any;
+          if (d?.value != null) hovered.ema50 = d.value;
+        }
+        if (ema200SeriesRef.current) {
+          const d = param.seriesData.get(ema200SeriesRef.current) as any;
+          if (d?.value != null) hovered.ema200 = d.value;
+        }
+        if (bbUpperSeriesRef.current && bbMiddleSeriesRef.current && bbLowerSeriesRef.current) {
+          const u = param.seriesData.get(bbUpperSeriesRef.current) as any;
+          const m = param.seriesData.get(bbMiddleSeriesRef.current) as any;
+          const l = param.seriesData.get(bbLowerSeriesRef.current) as any;
+          if (u?.value != null || m?.value != null || l?.value != null) {
+            hovered.bollinger = { upper: u?.value, middle: m?.value, lower: l?.value };
+          }
+        }
+        if (supertrendSeriesRef.current) {
+          const d = param.seriesData.get(supertrendSeriesRef.current) as any;
+          if (d?.value != null) hovered.supertrend = d.value;
+        }
+        setCrosshairIndicatorValues(hovered);
       } else {
         onPriceHover?.(null);
+        setCrosshairIndicatorValues(null);
       }
     });
 
@@ -728,16 +863,14 @@ export const TradingChart = forwardRef<TradingChartRef, TradingChartProps>(({
       });
     }
 
-    if (settings.precision !== 'default') {
-      const prec = Number(settings.precision);
-      mainSeriesRef.current.applyOptions({
-        priceFormat: {
-          type: 'price',
-          precision: prec,
-          minMove: 1 / Math.pow(10, prec),
-        },
-      });
-    }
+    const priceFormatConfig = {
+      type: 'price' as const,
+      precision: effectivePrecision,
+      minMove: effectiveMinMove,
+    };
+    mainSeriesRef.current.applyOptions({
+      priceFormat: priceFormatConfig,
+    });
 
     // Indicator labels (name badges and last values)
     const indSeriesWithTitle: [any, string][] = [
@@ -756,10 +889,11 @@ export const TradingChart = forwardRef<TradingChartRef, TradingChartProps>(({
           lastValueVisible: settings.showIndicatorLabels,
           title: settings.showIndicatorNameLabels ? title : '',
           priceLineVisible: settings.showIndicatorPriceLines,
+          priceFormat: priceFormatConfig,
         });
       }
     }
-  }, [settings, chartStyle, symbol]);
+  }, [settings, chartStyle, symbol, effectivePrecision, effectiveMinMove]);
 
   // 2. Update Data, Indicators, Colors, Thickness, and Line Styles
   useEffect(() => {
@@ -814,7 +948,7 @@ export const TradingChart = forwardRef<TradingChartRef, TradingChartProps>(({
         lineWidth: cfg.lineWidth as any,
         lineStyle: getLineStyle(cfg.lineStyle),
       });
-      if (cfg.enabled) {
+      if (cfg.enabled && !hiddenIndicators.has('ema9')) {
         const ema9 = calculateEMA(candles, cfg.period || 9);
         ema9SeriesRef.current.setData(ema9.map((p) => ({ time: p.time as any, value: p.value })));
       } else {
@@ -830,7 +964,7 @@ export const TradingChart = forwardRef<TradingChartRef, TradingChartProps>(({
         lineWidth: cfg.lineWidth as any,
         lineStyle: getLineStyle(cfg.lineStyle),
       });
-      if (cfg.enabled) {
+      if (cfg.enabled && !hiddenIndicators.has('ema20')) {
         const ema20 = calculateEMA(candles, cfg.period || 20);
         ema20SeriesRef.current.setData(ema20.map((p) => ({ time: p.time as any, value: p.value })));
       } else {
@@ -846,7 +980,7 @@ export const TradingChart = forwardRef<TradingChartRef, TradingChartProps>(({
         lineWidth: cfg.lineWidth as any,
         lineStyle: getLineStyle(cfg.lineStyle),
       });
-      if (cfg.enabled) {
+      if (cfg.enabled && !hiddenIndicators.has('ema50')) {
         const ema50 = calculateEMA(candles, cfg.period || 50);
         ema50SeriesRef.current.setData(ema50.map((p) => ({ time: p.time as any, value: p.value })));
       } else {
@@ -862,7 +996,7 @@ export const TradingChart = forwardRef<TradingChartRef, TradingChartProps>(({
         lineWidth: cfg.lineWidth as any,
         lineStyle: getLineStyle(cfg.lineStyle),
       });
-      if (cfg.enabled) {
+      if (cfg.enabled && !hiddenIndicators.has('ema200')) {
         const ema200 = calculateEMA(candles, cfg.period || 200);
         ema200SeriesRef.current.setData(ema200.map((p) => ({ time: p.time as any, value: p.value })));
       } else {
@@ -889,7 +1023,7 @@ export const TradingChart = forwardRef<TradingChartRef, TradingChartProps>(({
         lineStyle: getLineStyle(cfg.lineStyle),
       });
 
-      if (cfg.enabled) {
+      if (cfg.enabled && !hiddenIndicators.has('bollinger')) {
         const bb = calculateBollingerBands(candles, cfg.period || 20, cfg.stdDev || 2);
         bbUpperSeriesRef.current.setData(bb.map((p) => ({ time: p.time as any, value: p.upper })));
         bbMiddleSeriesRef.current.setData(bb.map((p) => ({ time: p.time as any, value: p.middle })));
@@ -909,23 +1043,59 @@ export const TradingChart = forwardRef<TradingChartRef, TradingChartProps>(({
         lineWidth: cfg.lineWidth as any,
         lineStyle: getLineStyle(cfg.lineStyle),
       });
-      if (cfg.enabled) {
+      if (cfg.enabled && !hiddenIndicators.has('supertrend')) {
         const st = calculateSupertrend(candles, cfg.period || 10, cfg.multiplier || 3);
         supertrendSeriesRef.current.setData(st.map((p) => ({ time: p.time as any, value: p.value })));
       } else {
         supertrendSeriesRef.current.setData([]);
       }
     }
-  }, [candles, indicatorConfigs, chartStyle]);
+  }, [candles, indicatorConfigs, chartStyle, hiddenIndicators]);
 
   // Active indicator list for the on-chart legend
   const activeLegendList = [
-    { key: 'ema9' as const, label: `EMA ${indicatorConfigs.ema9.period || 9}`, config: indicatorConfigs.ema9 },
-    { key: 'ema20' as const, label: `EMA ${indicatorConfigs.ema20.period || 20}`, config: indicatorConfigs.ema20 },
-    { key: 'ema50' as const, label: `EMA ${indicatorConfigs.ema50.period || 50}`, config: indicatorConfigs.ema50 },
-    { key: 'ema200' as const, label: `EMA ${indicatorConfigs.ema200.period || 200}`, config: indicatorConfigs.ema200 },
-    { key: 'bollinger' as const, label: `BB (${indicatorConfigs.bollinger.period || 20}, ${indicatorConfigs.bollinger.stdDev || 2})`, config: indicatorConfigs.bollinger },
-    { key: 'supertrend' as const, label: `Supertrend (${indicatorConfigs.supertrend.period || 10}, ${indicatorConfigs.supertrend.multiplier || 3})`, config: indicatorConfigs.supertrend },
+    {
+      key: 'ema9' as const,
+      name: 'EMA',
+      params: `${indicatorConfigs.ema9.period || 9} close`,
+      config: indicatorConfigs.ema9,
+      value: currentIndicatorValues?.ema9,
+    },
+    {
+      key: 'ema20' as const,
+      name: 'EMA',
+      params: `${indicatorConfigs.ema20.period || 20} close`,
+      config: indicatorConfigs.ema20,
+      value: currentIndicatorValues?.ema20,
+    },
+    {
+      key: 'ema50' as const,
+      name: 'EMA',
+      params: `${indicatorConfigs.ema50.period || 50} close`,
+      config: indicatorConfigs.ema50,
+      value: currentIndicatorValues?.ema50,
+    },
+    {
+      key: 'ema200' as const,
+      name: 'EMA',
+      params: `${indicatorConfigs.ema200.period || 200} close`,
+      config: indicatorConfigs.ema200,
+      value: currentIndicatorValues?.ema200,
+    },
+    {
+      key: 'bollinger' as const,
+      name: 'BB',
+      params: `${indicatorConfigs.bollinger.period || 20} close ${indicatorConfigs.bollinger.stdDev || 2}`,
+      config: indicatorConfigs.bollinger,
+      value: currentIndicatorValues?.bollinger,
+    },
+    {
+      key: 'supertrend' as const,
+      name: 'Supertrend',
+      params: `${indicatorConfigs.supertrend.period || 10} ${indicatorConfigs.supertrend.multiplier || 3}`,
+      config: indicatorConfigs.supertrend,
+      value: currentIndicatorValues?.supertrend,
+    },
   ].filter((item) => item.config.enabled);
 
   return (
@@ -944,48 +1114,7 @@ export const TradingChart = forwardRef<TradingChartRef, TradingChartProps>(({
         onToggleLockDrawings={() => setAreDrawingsLocked(!areDrawingsLocked)}
       />
 
-      {/* 2. TradingView Style On-Chart Active Legend */}
-      {settings.showIndicatorTitles && activeLegendList.length > 0 && (
-        <div className="absolute top-2 left-14 z-10 flex flex-wrap items-center gap-1.5 pointer-events-auto">
-          {activeLegendList.map((item) => (
-            <div
-              key={item.key}
-              className="flex items-center gap-1.5 px-2 py-0.5 rounded-lg bg-slate-900/80 hover:bg-slate-900 backdrop-blur-sm border border-slate-800 text-[11px] font-mono text-slate-300 shadow-md group transition-all"
-            >
-              <span
-                className="w-2 h-2 rounded-full shrink-0 shadow"
-                style={{ backgroundColor: item.config.color }}
-              />
-              <span className="font-semibold text-slate-200">{item.label}</span>
-              <span className="text-[10px] text-slate-500 font-sans">
-                {item.config.lineWidth}px
-              </span>
-
-              {/* Hover Controls: Toggle 👁️ / Settings ⚙️ */}
-              <div className="flex items-center gap-0.5 opacity-0 group-hover:opacity-100 transition-opacity ml-0.5">
-                <button
-                  type="button"
-                  onClick={() => onToggleIndicator?.(item.key)}
-                  className="p-0.5 rounded hover:bg-slate-800 text-slate-400 hover:text-white transition-colors"
-                  title="Hide indicator"
-                >
-                  <Eye className="w-3 h-3" />
-                </button>
-                <button
-                  type="button"
-                  onClick={() => onOpenIndicatorSettings?.(item.key)}
-                  className="p-0.5 rounded hover:bg-slate-800 text-slate-400 hover:text-blue-400 transition-colors"
-                  title="Configure indicator (color, width, style)"
-                >
-                  <Settings className="w-3 h-3" />
-                </button>
-              </div>
-            </div>
-          ))}
-        </div>
-      )}
-
-      {/* 3. Main Chart Canvas Viewport */}
+      {/* 2. Main Chart Canvas Viewport */}
       <div
         className="flex-1 w-full relative min-h-[260px] overflow-hidden"
         onContextMenu={(e) => {
@@ -996,7 +1125,125 @@ export const TradingChart = forwardRef<TradingChartRef, TradingChartProps>(({
       >
         <div ref={chartContainerRef} className="w-full h-full" />
 
-        {/* 4. Interactive Drawing SVG Overlay Layer */}
+        {/* TradingView Standard On-Chart Non-Blocking Indicator Legend */}
+        {settings.showIndicatorTitles && activeLegendList.length > 0 && (
+          <div className="absolute top-2 left-14 z-20 flex flex-col gap-0.5 pointer-events-auto select-none bg-transparent max-w-[calc(100%-120px)]">
+            {/* Legend Header with Collapse / Expand Toggle */}
+            <div className="flex items-center gap-1.5 text-[11px] text-slate-400">
+              <button
+                type="button"
+                onClick={() => setIsLegendCollapsed(!isLegendCollapsed)}
+                className="p-0.5 rounded hover:bg-slate-800/60 text-slate-400 hover:text-white transition-colors flex items-center gap-1"
+                title={isLegendCollapsed ? "Expand indicators" : "Collapse indicators"}
+              >
+                {isLegendCollapsed ? (
+                  <ChevronRight className="w-3.5 h-3.5 text-slate-400" />
+                ) : (
+                  <ChevronDown className="w-3.5 h-3.5 text-slate-400" />
+                )}
+                {isLegendCollapsed && (
+                  <span className="text-[10px] font-mono text-slate-400">
+                    Indicators ({activeLegendList.length})
+                  </span>
+                )}
+              </button>
+            </div>
+
+            {/* Indicator List Items (Stacked Cleanly, Transparent, Non-Blocking) */}
+            {!isLegendCollapsed && (
+              <div className="flex flex-col gap-0.5">
+                {activeLegendList.map((item) => {
+                  const isHidden = hiddenIndicators.has(item.key);
+
+                  return (
+                    <div
+                      key={item.key}
+                      className={`flex items-center gap-1.5 py-0.5 px-1.5 rounded transition-all text-[11px] font-sans group/item ${
+                        isHidden
+                          ? 'opacity-40 hover:opacity-90 hover:bg-slate-900/60'
+                          : 'hover:bg-slate-900/60 backdrop-blur-[2px]'
+                      }`}
+                    >
+                      {/* Colored Indicator Dot */}
+                      <span
+                        className="w-1.5 h-1.5 rounded-full shrink-0 shadow-sm"
+                        style={{ backgroundColor: item.config.color }}
+                      />
+
+                      {/* Indicator Name */}
+                      <span className="font-medium text-slate-300">
+                        {item.name}
+                      </span>
+
+                      {/* Indicator Parameters (e.g. 9 close) */}
+                      <span className="text-slate-500 text-[10px] font-mono">
+                        {item.params}
+                      </span>
+
+                      {/* Value Readout (in indicator color) */}
+                      {item.key === 'bollinger' && item.value && typeof item.value === 'object' ? (
+                        <div className="flex items-center gap-1 text-[10.5px] font-mono ml-0.5">
+                          <span style={{ color: item.config.color }}>
+                            {item.value.upper != null ? formatMarketPrice(item.value.upper, symbol, effectivePrecision) : '--'}
+                          </span>
+                          <span className="text-amber-400/90">
+                            {item.value.middle != null ? formatMarketPrice(item.value.middle, symbol, effectivePrecision) : '--'}
+                          </span>
+                          <span style={{ color: item.config.color }}>
+                            {item.value.lower != null ? formatMarketPrice(item.value.lower, symbol, effectivePrecision) : '--'}
+                          </span>
+                        </div>
+                      ) : (
+                        <span
+                          className="font-mono text-[10.5px] font-semibold ml-0.5"
+                          style={{ color: isHidden ? '#64748b' : item.config.color }}
+                        >
+                          {item.value != null
+                            ? formatMarketPrice(item.value, symbol, effectivePrecision)
+                            : '--'}
+                        </span>
+                      )}
+
+                      {/* Hover Controls: Toggle Visibility 👁️ / Settings ⚙️ / Remove ✕ */}
+                      <div className="flex items-center gap-0.5 opacity-0 group-hover/item:opacity-100 transition-opacity ml-1.5">
+                        <button
+                          type="button"
+                          onClick={() => toggleIndicatorVisibility(item.key)}
+                          className="p-0.5 rounded hover:bg-slate-700/80 text-slate-400 hover:text-white transition-colors"
+                          title={isHidden ? "Show indicator" : "Hide indicator"}
+                        >
+                          {isHidden ? (
+                            <EyeOff className="w-3 h-3 text-slate-500" />
+                          ) : (
+                            <Eye className="w-3 h-3 text-slate-300" />
+                          )}
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => onOpenIndicatorSettings?.(item.key)}
+                          className="p-0.5 rounded hover:bg-slate-700/80 text-slate-400 hover:text-blue-400 transition-colors"
+                          title="Configure indicator (color, width, style)"
+                        >
+                          <Settings className="w-3 h-3 text-slate-300" />
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => onToggleIndicator?.(item.key)}
+                          className="p-0.5 rounded hover:bg-slate-700/80 text-slate-400 hover:text-rose-400 transition-colors"
+                          title="Remove indicator"
+                        >
+                          <X className="w-3 h-3 text-slate-400 hover:text-rose-400" />
+                        </button>
+                      </div>
+                    </div>
+                  );
+                })}
+              </div>
+            )}
+          </div>
+        )}
+
+        {/* 3. Interactive Drawing SVG Overlay Layer */}
         <DrawingOverlay
           chart={chartRef.current}
           series={mainSeriesRef.current}
@@ -1012,14 +1259,14 @@ export const TradingChart = forwardRef<TradingChartRef, TradingChartProps>(({
           areDrawingsLocked={areDrawingsLocked}
         />
 
-        {/* TradingView Range High and Low Labels */}
+        {/* TradingView Range High and Low Labels (Off by default, positioned on top-right to prevent overlap) */}
         {settings.showHighLowLabels && candles.length > 0 && (
-          <div className="absolute top-2 left-16 z-20 flex items-center gap-2 pointer-events-none text-[10px] font-mono select-none">
+          <div className="absolute top-2 right-28 z-20 flex items-center gap-2 pointer-events-none text-[10px] font-mono select-none">
             <span className="px-1.5 py-0.5 rounded bg-emerald-950/70 border border-emerald-500/30 text-emerald-400 shadow-sm">
-              H: ${Math.max(...candles.map((c) => c.high)).toLocaleString(undefined, { minimumFractionDigits: 2 })}
+              H: ${formatMarketPrice(Math.max(...candles.map((c) => c.high)), symbol, effectivePrecision)}
             </span>
             <span className="px-1.5 py-0.5 rounded bg-rose-950/70 border border-rose-500/30 text-rose-400 shadow-sm">
-              L: ${Math.min(...candles.map((c) => c.low)).toLocaleString(undefined, { minimumFractionDigits: 2 })}
+              L: ${formatMarketPrice(Math.min(...candles.map((c) => c.low)), symbol, effectivePrecision)}
             </span>
           </div>
         )}
