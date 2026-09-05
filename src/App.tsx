@@ -114,6 +114,60 @@ export const App: React.FC = () => {
   });
 
   const chartRef = useRef<TradingChartRef>(null);
+  const chartWrapperRef = useRef<HTMLDivElement>(null);
+  const [isFullscreen, setIsFullscreen] = useState<boolean>(false);
+
+  // Fullscreen Mode Toggle (HTML5 Fullscreen API + Fallback)
+  const handleToggleFullscreen = useCallback(() => {
+    const el = chartWrapperRef.current;
+    if (!el) return;
+
+    if (!document.fullscreenElement) {
+      if (el.requestFullscreen) {
+        el.requestFullscreen().then(() => {
+          setIsFullscreen(true);
+        }).catch(() => {
+          setIsFullscreen((prev) => !prev);
+        });
+      } else {
+        setIsFullscreen((prev) => !prev);
+      }
+    } else {
+      if (document.exitFullscreen) {
+        document.exitFullscreen().then(() => {
+          setIsFullscreen(false);
+        }).catch(() => {
+          setIsFullscreen(false);
+        });
+      } else {
+        setIsFullscreen(false);
+      }
+    }
+  }, []);
+
+  // Listen for fullscreen change events & keyboard shortcut (Shift+F)
+  useEffect(() => {
+    const onFullscreenChange = () => {
+      setIsFullscreen(Boolean(document.fullscreenElement));
+    };
+
+    const handleKeyDown = (e: KeyboardEvent) => {
+      if (e.target instanceof HTMLInputElement || e.target instanceof HTMLTextAreaElement) {
+        return;
+      }
+      if (e.shiftKey && (e.key === 'F' || e.key === 'f')) {
+        e.preventDefault();
+        handleToggleFullscreen();
+      }
+    };
+
+    document.addEventListener('fullscreenchange', onFullscreenChange);
+    window.addEventListener('keydown', handleKeyDown);
+    return () => {
+      document.removeEventListener('fullscreenchange', onFullscreenChange);
+      window.removeEventListener('keydown', handleKeyDown);
+    };
+  }, [handleToggleFullscreen]);
 
   // 1. Initial Load of Strategies & Bybit Tickers (Using Resilient ApiClient)
   useEffect(() => {
@@ -487,23 +541,30 @@ export const App: React.FC = () => {
   return (
     <div className="flex flex-col h-screen w-screen bg-[#060910] text-slate-100 overflow-hidden font-sans select-none">
       {/* 1. Global Navigation Bar */}
-      <Navbar
-        isPaperMode={isPaperMode}
-        onTogglePaperMode={() => setIsPaperMode(!isPaperMode)}
-        balance={isPaperMode ? paperAccount.balance : liveBalance}
-        unrealizedPnl={isPaperMode ? paperAccount.equity - paperAccount.balance : 0}
-        activeStrategy={activeStrategy}
-        onOpenStrategyManager={() => setIsStrategyModalOpen(true)}
-        onOpenApiKeys={() => setIsApiModalOpen(true)}
-        isAiSidebarOpen={isAiSidebarOpen}
-        onToggleAiSidebar={() => setIsAiSidebarOpen(!isAiSidebarOpen)}
-        hasGeminiKey={Boolean(credentials.geminiApiKey)}
-      />
+      {!isFullscreen && (
+        <Navbar
+          isPaperMode={isPaperMode}
+          onTogglePaperMode={() => setIsPaperMode(!isPaperMode)}
+          balance={isPaperMode ? paperAccount.balance : liveBalance}
+          unrealizedPnl={isPaperMode ? paperAccount.equity - paperAccount.balance : 0}
+          activeStrategy={activeStrategy}
+          onOpenStrategyManager={() => setIsStrategyModalOpen(true)}
+          onOpenApiKeys={() => setIsApiModalOpen(true)}
+          isAiSidebarOpen={isAiSidebarOpen}
+          onToggleAiSidebar={() => setIsAiSidebarOpen(!isAiSidebarOpen)}
+          hasGeminiKey={Boolean(credentials.geminiApiKey)}
+        />
+      )}
 
       {/* 2. Main Workspace Layout */}
       <div className="flex-1 flex overflow-hidden min-h-0 relative">
         {/* Left/Center Column: Chart Header + Chart Canvas + Positions Table */}
-        <div className="flex-1 flex flex-col min-w-0 h-full overflow-hidden">
+        <div
+          ref={chartWrapperRef}
+          className={`flex-1 flex flex-col min-w-0 h-full overflow-hidden transition-all duration-200 ${
+            isFullscreen ? 'fixed inset-0 z-50 bg-[#090d16] w-screen h-screen' : ''
+          }`}
+        >
           {/* Chart Header Bar */}
           <ChartHeader
             symbol={symbol}
@@ -520,6 +581,8 @@ export const App: React.FC = () => {
             onOpenTickerSelector={() => setIsTickerModalOpen(true)}
             onAnalyzeChart={() => handleSendMessage(`Analyze ${symbol} ${timeframe} market structure and indicators.`, true)}
             isAiAnalyzing={isAiGenerating}
+            isFullscreen={isFullscreen}
+            onToggleFullscreen={handleToggleFullscreen}
             isOrderBookOpen={isOrderBookOpen}
             onToggleOrderBook={() => setIsOrderBookOpen(!isOrderBookOpen)}
             isOrderFormOpen={isOrderFormOpen}
@@ -541,26 +604,30 @@ export const App: React.FC = () => {
               onOpenIndicatorSettings={handleOpenIndicatorSettings}
               onToggleIndicator={handleToggleIndicator}
               onHoverOhlc={setHoverOhlc}
+              isFullscreen={isFullscreen}
+              onToggleFullscreen={handleToggleFullscreen}
             />
           </div>
 
-          {/* Bottom Area: Open Positions & Trade History Journal (Contained strictly under Chart) */}
-          <div className="h-44 shrink-0 border-t border-slate-800">
-            <PositionsTable
-              positions={activePositions}
-              paperAccount={paperAccount}
-              isPaperMode={isPaperMode}
-              onClosePosition={handleClosePosition}
-              onResetPaperAccount={handleResetPaperAccount}
-            />
-          </div>
+          {/* Bottom Area: Open Positions & Trade History Journal (Hidden when in Fullscreen) */}
+          {!isFullscreen && (
+            <div className="h-44 shrink-0 border-t border-slate-800">
+              <PositionsTable
+                positions={activePositions}
+                paperAccount={paperAccount}
+                isPaperMode={isPaperMode}
+                onClosePosition={handleClosePosition}
+                onResetPaperAccount={handleResetPaperAccount}
+              />
+            </div>
+          )}
         </div>
 
         {/* Right Sidebars & Drawers (Full Screen Height from top to bottom) */}
         {/* 1. Sliding Order Book Drawer */}
         <div
           className={`transition-[width,opacity] duration-300 ease-in-out shrink-0 overflow-hidden ${
-            isOrderBookOpen ? 'w-52 opacity-100' : 'w-0 opacity-0 pointer-events-none'
+            !isFullscreen && isOrderBookOpen ? 'w-52 opacity-100' : 'w-0 opacity-0 pointer-events-none'
           }`}
         >
           <div className="w-52 min-w-[208px] h-full">
@@ -575,7 +642,7 @@ export const App: React.FC = () => {
         {/* 2. Sliding Trade Order Form Drawer */}
         <div
           className={`transition-[width,opacity] duration-300 ease-in-out shrink-0 overflow-hidden ${
-            isOrderFormOpen ? 'w-80 opacity-100' : 'w-0 opacity-0 pointer-events-none'
+            !isFullscreen && isOrderFormOpen ? 'w-80 opacity-100' : 'w-0 opacity-0 pointer-events-none'
           }`}
         >
           <div className="w-80 min-w-[320px] h-full">
@@ -596,7 +663,7 @@ export const App: React.FC = () => {
         {/* 3. Sliding Gemini AI Copilot Drawer */}
         <div
           className={`transition-[width,opacity] duration-300 ease-in-out shrink-0 overflow-hidden ${
-            isAiSidebarOpen ? 'w-96 opacity-100' : 'w-0 opacity-0 pointer-events-none'
+            !isFullscreen && isAiSidebarOpen ? 'w-96 opacity-100' : 'w-0 opacity-0 pointer-events-none'
           }`}
         >
           <div className="w-96 min-w-[384px] h-full">
@@ -620,61 +687,63 @@ export const App: React.FC = () => {
         </div>
 
         {/* 4. Right Action Dock Rail */}
-        <div className="w-12 border-l border-slate-800/80 bg-[#090d16] flex flex-col items-center py-3 justify-between z-20 shrink-0">
-          <div className="flex flex-col items-center gap-3">
-            {/* Toggle Order Book */}
-            <button
-              onClick={() => setIsOrderBookOpen(!isOrderBookOpen)}
-              className={`p-2 rounded-xl transition-all ${
-                isOrderBookOpen
-                  ? 'bg-blue-600 text-white shadow-lg shadow-blue-500/30'
-                  : 'text-slate-400 hover:text-white hover:bg-slate-800'
-              }`}
-              title={isOrderBookOpen ? 'Hide Order Book' : 'Show Order Book'}
-            >
-              <BookOpen className="w-4 h-4" />
-            </button>
+        {!isFullscreen && (
+          <div className="w-12 border-l border-slate-800/80 bg-[#090d16] flex flex-col items-center py-3 justify-between z-20 shrink-0">
+            <div className="flex flex-col items-center gap-3">
+              {/* Toggle Order Book */}
+              <button
+                onClick={() => setIsOrderBookOpen(!isOrderBookOpen)}
+                className={`p-2 rounded-xl transition-all ${
+                  isOrderBookOpen
+                    ? 'bg-blue-600 text-white shadow-lg shadow-blue-500/30'
+                    : 'text-slate-400 hover:text-white hover:bg-slate-800'
+                }`}
+                title={isOrderBookOpen ? 'Hide Order Book' : 'Show Order Book'}
+              >
+                <BookOpen className="w-4 h-4" />
+              </button>
 
-            {/* Toggle Order Form */}
-            <button
-              onClick={() => setIsOrderFormOpen(!isOrderFormOpen)}
-              className={`p-2 rounded-xl transition-all ${
-                isOrderFormOpen
-                  ? 'bg-emerald-600 text-white shadow-lg shadow-emerald-500/30'
-                  : 'text-slate-400 hover:text-white hover:bg-slate-800'
-              }`}
-              title={isOrderFormOpen ? 'Hide Order Form' : 'Show Order Form'}
-            >
-              <Zap className="w-4 h-4" />
-            </button>
+              {/* Toggle Order Form */}
+              <button
+                onClick={() => setIsOrderFormOpen(!isOrderFormOpen)}
+                className={`p-2 rounded-xl transition-all ${
+                  isOrderFormOpen
+                    ? 'bg-emerald-600 text-white shadow-lg shadow-emerald-500/30'
+                    : 'text-slate-400 hover:text-white hover:bg-slate-800'
+                }`}
+                title={isOrderFormOpen ? 'Hide Order Form' : 'Show Order Form'}
+              >
+                <Zap className="w-4 h-4" />
+              </button>
 
-            {/* Toggle AI Copilot */}
-            <button
-              onClick={() => setIsAiSidebarOpen(!isAiSidebarOpen)}
-              className={`p-2 rounded-xl transition-all relative ${
-                isAiSidebarOpen
-                  ? 'bg-purple-600 text-white shadow-lg shadow-purple-500/30'
-                  : 'text-slate-400 hover:text-white hover:bg-slate-800'
-              }`}
-              title={isAiSidebarOpen ? 'Hide AI Copilot' : 'Show AI Copilot'}
-            >
-              <Bot className="w-4 h-4" />
-              {isAiGenerating && (
-                <span className="absolute top-1 right-1 w-2 h-2 rounded-full bg-purple-400 animate-ping" />
-              )}
-            </button>
+              {/* Toggle AI Copilot */}
+              <button
+                onClick={() => setIsAiSidebarOpen(!isAiSidebarOpen)}
+                className={`p-2 rounded-xl transition-all relative ${
+                  isAiSidebarOpen
+                    ? 'bg-purple-600 text-white shadow-lg shadow-purple-500/30'
+                    : 'text-slate-400 hover:text-white hover:bg-slate-800'
+                }`}
+                title={isAiSidebarOpen ? 'Hide AI Copilot' : 'Show AI Copilot'}
+              >
+                <Bot className="w-4 h-4" />
+                {isAiGenerating && (
+                  <span className="absolute top-1 right-1 w-2 h-2 rounded-full bg-purple-400 animate-ping" />
+                )}
+              </button>
+            </div>
+
+            <div className="flex flex-col items-center gap-2">
+              <button
+                onClick={() => handleSendMessage(`Quick scan on ${symbol}: evaluate current candlestick momentum.`, true)}
+                className="p-2 rounded-xl text-slate-400 hover:text-blue-400 hover:bg-slate-800 transition-all"
+                title="One-Click AI Scan"
+              >
+                <Sparkles className="w-4 h-4" />
+              </button>
+            </div>
           </div>
-
-          <div className="flex flex-col items-center gap-2">
-            <button
-              onClick={() => handleSendMessage(`Quick scan on ${symbol}: evaluate current candlestick momentum.`, true)}
-              className="p-2 rounded-xl text-slate-400 hover:text-blue-400 hover:bg-slate-800 transition-all"
-              title="One-Click AI Scan"
-            >
-              <Sparkles className="w-4 h-4" />
-            </button>
-          </div>
-        </div>
+        )}
       </div>
 
       {/* Modals */}

@@ -14,7 +14,9 @@ import {
   CandlestickChart,
   LineChart as LineChartIcon,
   AreaChart,
-  BarChart3
+  BarChart3,
+  Maximize2,
+  Minimize2
 } from 'lucide-react';
 import { IndicatorSettings, TickerInfo, ChartStyleType, OHLCData } from '../../lib/types';
 import { AllIndicatorConfigs, DEFAULT_INDICATOR_CONFIGS } from '../../lib/indicatorConfig';
@@ -34,6 +36,10 @@ interface ChartHeaderProps {
   onOpenTickerSelector: () => void;
   onAnalyzeChart: () => void;
   isAiAnalyzing?: boolean;
+
+  // Fullscreen
+  isFullscreen?: boolean;
+  onToggleFullscreen?: () => void;
 
   // Panel Slider Toggles
   isOrderBookOpen: boolean;
@@ -77,6 +83,8 @@ export const ChartHeader: React.FC<ChartHeaderProps> = ({
   onOpenTickerSelector,
   onAnalyzeChart,
   isAiAnalyzing = false,
+  isFullscreen = false,
+  onToggleFullscreen,
   isOrderBookOpen,
   onToggleOrderBook,
   isOrderFormOpen,
@@ -322,6 +330,20 @@ export const ChartHeader: React.FC<ChartHeaderProps> = ({
               <Bot className="w-3.5 h-3.5" />
             </button>
           </div>
+
+          {/* Fullscreen Mode Toggle (TradingView Style) */}
+          <button
+            type="button"
+            onClick={onToggleFullscreen}
+            className={`p-1.5 rounded-lg border text-xs transition-all ${
+              isFullscreen
+                ? 'bg-blue-600 border-blue-500 text-white shadow-lg shadow-blue-500/30'
+                : 'bg-slate-800/80 hover:bg-slate-700/80 border-slate-700/60 text-slate-300 hover:text-white'
+            }`}
+            title={isFullscreen ? 'Exit Full Screen (Esc / Shift+F)' : 'Full Screen Chart (Shift+F)'}
+          >
+            {isFullscreen ? <Minimize2 className="w-3.5 h-3.5" /> : <Maximize2 className="w-3.5 h-3.5" />}
+          </button>
         </div>
       </div>
 

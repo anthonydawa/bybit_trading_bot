@@ -12,7 +12,7 @@ import {
   LineStyle,
   PriceScaleMode,
 } from 'lightweight-charts';
-import { Settings, Eye, RotateCcw } from 'lucide-react';
+import { Settings, Eye, RotateCcw, Maximize2, Minimize2 } from 'lucide-react';
 import { Candle, IndicatorSettings, ChartStyleType, OHLCData } from '../../lib/types';
 import {
   AllIndicatorConfigs,
@@ -54,6 +54,8 @@ interface TradingChartProps {
   onToggleIndicator?: (key: keyof AllIndicatorConfigs) => void;
   onPriceHover?: (price: number | null) => void;
   onHoverOhlc?: (data: OHLCData | null) => void;
+  isFullscreen?: boolean;
+  onToggleFullscreen?: () => void;
 }
 
 function getLineStyle(style?: LineStyleType): LineStyle {
@@ -83,6 +85,8 @@ export const TradingChart = forwardRef<TradingChartRef, TradingChartProps>(({
   onToggleIndicator,
   onPriceHover,
   onHoverOhlc,
+  isFullscreen = false,
+  onToggleFullscreen,
 }, ref) => {
   const chartContainerRef = useRef<HTMLDivElement>(null);
 
@@ -789,6 +793,22 @@ export const TradingChart = forwardRef<TradingChartRef, TradingChartProps>(({
           >
             <RotateCcw className="w-3 h-3" />
           </button>
+
+          {/* Fullscreen Toggle Button */}
+          {onToggleFullscreen && (
+            <button
+              type="button"
+              onClick={onToggleFullscreen}
+              className={`p-1 rounded transition-all active:scale-95 ${
+                isFullscreen
+                  ? 'bg-blue-600 text-white shadow-md shadow-blue-500/30'
+                  : 'bg-slate-900/80 hover:bg-slate-800 text-slate-400 hover:text-white border border-slate-800'
+              }`}
+              title={isFullscreen ? 'Exit Full Screen (Esc / Shift+F)' : 'Full Screen Chart (Shift+F)'}
+            >
+              {isFullscreen ? <Minimize2 className="w-3 h-3" /> : <Maximize2 className="w-3 h-3" />}
+            </button>
+          )}
         </div>
       </div>
 
