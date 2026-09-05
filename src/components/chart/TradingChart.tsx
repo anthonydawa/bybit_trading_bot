@@ -33,10 +33,17 @@ import {
   saveStoredDrawings,
   clearStoredDrawings,
 } from '../../lib/drawingStorage';
+import {
+  ChartCustomizationSettings,
+  getStoredChartSettings,
+  saveStoredChartSettings,
+} from '../../lib/chartSettingsStorage';
 import { DrawingToolbar } from './DrawingToolbar';
 import { DrawingOverlay } from './DrawingOverlay';
 import { RsiSubChart } from './RsiSubChart';
 import { MacdSubChart } from './MacdSubChart';
+import { ChartScaleMenu } from './ChartScaleMenu';
+import { ChartSettingsModal } from './ChartSettingsModal';
 
 export interface TradingChartRef {
   captureSnapshot: () => Promise<string | null>;
@@ -104,10 +111,21 @@ export const TradingChart = forwardRef<TradingChartRef, TradingChartProps>(({
   const bbLowerSeriesRef = useRef<ISeriesApi<'Line'> | null>(null);
   const supertrendSeriesRef = useRef<ISeriesApi<'Line'> | null>(null);
 
-  // TradingView Scale Options State
-  const [isAutoScale, setIsAutoScale] = useState<boolean>(true);
-  const [isLogScale, setIsLogScale] = useState<boolean>(false);
+  // TradingView Scale & Chart Customization Settings State
+  const [settings, setSettings] = useState<ChartCustomizationSettings>(() => getStoredChartSettings());
+  const [isScaleMenuOpen, setIsScaleMenuOpen] = useState<boolean>(false);
+  const [scaleMenuPos, setScaleMenuPos] = useState<{ x: number; y: number } | null>(null);
+  const [isChartSettingsModalOpen, setIsChartSettingsModalOpen] = useState<boolean>(false);
+  const [countdownText, setCountdownText] = useState<string>('');
   const [activeRange, setActiveRange] = useState<string>('ALL');
+
+  const handleUpdateSettings = useCallback((patch: Partial<ChartCustomizationSettings>) => {
+    setSettings((prev) => {
+      const next = { ...prev, ...patch };
+      saveStoredChartSettings(next);
+      return next;
+    });
+  }, []);
 
   // Drawing Tools State (Persisted per symbol in browser LocalStorage)
   const [drawings, setDrawings] = useState<Drawing[]>(() => getStoredDrawings(symbol));
@@ -115,6 +133,42 @@ export const TradingChart = forwardRef<TradingChartRef, TradingChartProps>(({
   const [isMagnetEnabled, setIsMagnetEnabled] = useState<boolean>(false);
   const [areDrawingsHidden, setAreDrawingsHidden] = useState<boolean>(false);
   const [areDrawingsLocked, setAreDrawingsLocked] = useState<boolean>(false);
+
+  // Live countdown to active candle close
+  useEffect(() => {
+    if (!settings.showCountdown) return;
+
+    const timeframeSeconds: Record<string, number> = {
+      '1': 60,
+      '3': 180,
+      '5': 300,
+      '15': 900,
+      '30': 1800,
+      '60': 3600,
+      '240': 14400,
+      'D': 86400,
+    };
+    const period = timeframeSeconds[timeframe] || 60;
+
+    const updateCountdown = () => {
+      const nowSec = Math.floor(Date.now() / 1000);
+      const remaining = Math.max(0, period - (nowSec % period));
+      if (period >= 3600) {
+        const h = Math.floor(remaining / 3600);
+        const remM = Math.floor((remaining % 3600) / 60);
+        const s = remaining % 60;
+        setCountdownText(`${String(h).padStart(2, '0')}:${String(remM).padStart(2, '0')}:${String(s).padStart(2, '0')}`);
+      } else {
+        const m = Math.floor(remaining / 60);
+        const s = remaining % 60;
+        setCountdownText(`${String(m).padStart(2, '0')}:${String(s).padStart(2, '0')}`);
+      }
+    };
+
+    updateCountdown();
+    const interval = setInterval(updateCountdown, 1000);
+    return () => clearInterval(interval);
+  }, [settings.showCountdown, timeframe]);
 
   // Re-center / Auto-Scale / Normalize Chart View Function
   const handleResetChart = useCallback(() => {
@@ -126,36 +180,11 @@ export const TradingChart = forwardRef<TradingChartRef, TradingChartProps>(({
           bottom: 0.15,
         },
       });
-      setIsAutoScale(true);
+      handleUpdateSettings({ autoScale: true });
       chartRef.current.timeScale().resetTimeScale();
       chartRef.current.timeScale().fitContent();
     }
-  }, []);
-
-  // Toggle Auto-Scale Mode
-  const handleToggleAutoScale = () => {
-    if (mainSeriesRef.current) {
-      const next = !isAutoScale;
-      mainSeriesRef.current.priceScale().applyOptions({
-        autoScale: next,
-      });
-      setIsAutoScale(next);
-      if (next) {
-        chartRef.current?.timeScale().fitContent();
-      }
-    }
-  };
-
-  // Toggle Logarithmic Scale Mode
-  const handleToggleLogScale = () => {
-    if (mainSeriesRef.current) {
-      const next = !isLogScale;
-      mainSeriesRef.current.priceScale().applyOptions({
-        mode: next ? PriceScaleMode.Logarithmic : PriceScaleMode.Normal,
-      });
-      setIsLogScale(next);
-    }
-  };
+  }, [handleUpdateSettings]);
 
   // Range Shortcuts (1D, 5D, 1M, 3M, 6M, YTD, ALL)
   const handleSelectRange = (shortcut: typeof RANGE_SHORTCUTS[number]) => {
@@ -289,14 +318,32 @@ export const TradingChart = forwardRef<TradingChartRef, TradingChartProps>(({
 
     const chart = createChart(chartContainerRef.current, {
       layout: {
-        background: { type: ColorType.Solid, color: '#090d16' },
+        background: { type: ColorType.Solid, color: settings.backgroundColor },
         textColor: '#94a3b8',
         fontSize: 11,
         fontFamily: 'JetBrains Mono, monospace, sans-serif',
       },
       grid: {
-        vertLines: { color: 'rgba(30, 41, 59, 0.45)', style: LineStyle.Dotted },
-        horzLines: { color: 'rgba(30, 41, 59, 0.45)', style: LineStyle.Dotted },
+        vertLines: {
+          visible: settings.showGridVert && settings.gridStyle !== 'none',
+          color: 'rgba(30, 41, 59, 0.45)',
+          style:
+            settings.gridStyle === 'dashed'
+              ? LineStyle.Dashed
+              : settings.gridStyle === 'solid'
+              ? LineStyle.Solid
+              : LineStyle.Dotted,
+        },
+        horzLines: {
+          visible: settings.showGridHorz && settings.gridStyle !== 'none',
+          color: 'rgba(30, 41, 59, 0.45)',
+          style:
+            settings.gridStyle === 'dashed'
+              ? LineStyle.Dashed
+              : settings.gridStyle === 'solid'
+              ? LineStyle.Solid
+              : LineStyle.Dotted,
+        },
       },
       crosshair: {
         mode: CrosshairMode.Normal,
@@ -314,8 +361,36 @@ export const TradingChart = forwardRef<TradingChartRef, TradingChartProps>(({
         },
       },
       rightPriceScale: {
+        visible: settings.scalePosition === 'right',
         borderColor: '#1e293b',
-        autoScale: true,
+        autoScale: settings.autoScale,
+        invertScale: settings.invertScale,
+        mode:
+          settings.scaleMode === 'logarithmic'
+            ? PriceScaleMode.Logarithmic
+            : settings.scaleMode === 'percentage'
+            ? PriceScaleMode.Percentage
+            : settings.scaleMode === 'indexed'
+            ? PriceScaleMode.IndexedTo100
+            : PriceScaleMode.Normal,
+        scaleMargins: {
+          top: 0.08,
+          bottom: 0.15,
+        },
+      },
+      leftPriceScale: {
+        visible: settings.scalePosition === 'left',
+        borderColor: '#1e293b',
+        autoScale: settings.autoScale,
+        invertScale: settings.invertScale,
+        mode:
+          settings.scaleMode === 'logarithmic'
+            ? PriceScaleMode.Logarithmic
+            : settings.scaleMode === 'percentage'
+            ? PriceScaleMode.Percentage
+            : settings.scaleMode === 'indexed'
+            ? PriceScaleMode.IndexedTo100
+            : PriceScaleMode.Normal,
         scaleMargins: {
           top: 0.08,
           bottom: 0.15,
@@ -325,6 +400,14 @@ export const TradingChart = forwardRef<TradingChartRef, TradingChartProps>(({
         borderColor: '#1e293b',
         timeVisible: true,
         secondsVisible: false,
+      },
+      watermark: {
+        visible: settings.showWatermark,
+        fontSize: 54,
+        horzAlign: 'center',
+        vertAlign: 'center',
+        color: 'rgba(148, 163, 184, 0.07)',
+        text: symbol,
       },
       handleScroll: {
         mouseWheel: true,
@@ -345,6 +428,8 @@ export const TradingChart = forwardRef<TradingChartRef, TradingChartProps>(({
       mainSeries = chart.addLineSeries({
         color: '#3b82f6',
         lineWidth: 2,
+        lastValueVisible: settings.showLastPriceLabel,
+        priceLineVisible: settings.showPriceLine,
       });
     } else if (chartStyle === 'area') {
       mainSeries = chart.addAreaSeries({
@@ -352,20 +437,29 @@ export const TradingChart = forwardRef<TradingChartRef, TradingChartProps>(({
         bottomColor: 'rgba(59, 130, 246, 0.0)',
         lineColor: '#3b82f6',
         lineWidth: 2,
+        lastValueVisible: settings.showLastPriceLabel,
+        priceLineVisible: settings.showPriceLine,
       });
     } else if (chartStyle === 'bars') {
       mainSeries = chart.addBarSeries({
-        upColor: '#10b981',
-        downColor: '#ef4444',
+        upColor: settings.candleUpColor,
+        downColor: settings.candleDownColor,
+        lastValueVisible: settings.showLastPriceLabel,
+        priceLineVisible: settings.showPriceLine,
       });
     } else {
       // Default: Candlesticks (or hollow)
       mainSeries = chart.addCandlestickSeries({
-        upColor: '#10b981',
-        downColor: '#ef4444',
-        borderVisible: false,
-        wickUpColor: '#10b981',
-        wickDownColor: '#ef4444',
+        upColor: settings.candleUpColor,
+        downColor: settings.candleDownColor,
+        borderVisible: true,
+        borderColor: '#2a2e39',
+        borderUpColor: settings.candleBorderUpColor,
+        borderDownColor: settings.candleBorderDownColor,
+        wickUpColor: settings.wickColorUp,
+        wickDownColor: settings.wickColorDown,
+        lastValueVisible: settings.showLastPriceLabel,
+        priceLineVisible: settings.showPriceLine,
       });
     }
     mainSeriesRef.current = mainSeries;
@@ -509,6 +603,143 @@ export const TradingChart = forwardRef<TradingChartRef, TradingChartProps>(({
       chart.remove();
     };
   }, [chartStyle, handleResetChart]);
+
+  // Dynamically apply settings to chart & series on customization update
+  useEffect(() => {
+    if (!chartRef.current || !mainSeriesRef.current) return;
+
+    chartRef.current.applyOptions({
+      layout: {
+        background: { type: ColorType.Solid, color: settings.backgroundColor },
+      },
+      grid: {
+        vertLines: {
+          visible: settings.showGridVert && settings.gridStyle !== 'none',
+          style:
+            settings.gridStyle === 'dashed'
+              ? LineStyle.Dashed
+              : settings.gridStyle === 'solid'
+              ? LineStyle.Solid
+              : LineStyle.Dotted,
+          color: 'rgba(30, 41, 59, 0.45)',
+        },
+        horzLines: {
+          visible: settings.showGridHorz && settings.gridStyle !== 'none',
+          style:
+            settings.gridStyle === 'dashed'
+              ? LineStyle.Dashed
+              : settings.gridStyle === 'solid'
+              ? LineStyle.Solid
+              : LineStyle.Dotted,
+          color: 'rgba(30, 41, 59, 0.45)',
+        },
+      },
+      rightPriceScale: {
+        visible: settings.scalePosition === 'right',
+        autoScale: settings.autoScale,
+        invertScale: settings.invertScale,
+        mode:
+          settings.scaleMode === 'logarithmic'
+            ? PriceScaleMode.Logarithmic
+            : settings.scaleMode === 'percentage'
+            ? PriceScaleMode.Percentage
+            : settings.scaleMode === 'indexed'
+            ? PriceScaleMode.IndexedTo100
+            : PriceScaleMode.Normal,
+      },
+      leftPriceScale: {
+        visible: settings.scalePosition === 'left',
+        autoScale: settings.autoScale,
+        invertScale: settings.invertScale,
+        mode:
+          settings.scaleMode === 'logarithmic'
+            ? PriceScaleMode.Logarithmic
+            : settings.scaleMode === 'percentage'
+            ? PriceScaleMode.Percentage
+            : settings.scaleMode === 'indexed'
+            ? PriceScaleMode.IndexedTo100
+            : PriceScaleMode.Normal,
+      },
+      watermark: {
+        visible: settings.showWatermark,
+        fontSize: 54,
+        horzAlign: 'center',
+        vertAlign: 'center',
+        color: 'rgba(148, 163, 184, 0.07)',
+        text: symbol,
+      },
+    });
+
+    mainSeriesRef.current.priceScale().applyOptions({
+      autoScale: settings.autoScale,
+      invertScale: settings.invertScale,
+      mode:
+        settings.scaleMode === 'logarithmic'
+          ? PriceScaleMode.Logarithmic
+          : settings.scaleMode === 'percentage'
+          ? PriceScaleMode.Percentage
+          : settings.scaleMode === 'indexed'
+          ? PriceScaleMode.IndexedTo100
+          : PriceScaleMode.Normal,
+    });
+
+    if (chartStyle === 'candles') {
+      mainSeriesRef.current.applyOptions({
+        upColor: settings.candleUpColor,
+        downColor: settings.candleDownColor,
+        wickUpColor: settings.wickColorUp,
+        wickDownColor: settings.wickColorDown,
+        borderVisible: true,
+        borderColor: '#2a2e39',
+        borderUpColor: settings.candleBorderUpColor,
+        borderDownColor: settings.candleBorderDownColor,
+        lastValueVisible: settings.showLastPriceLabel,
+        priceLineVisible: settings.showPriceLine,
+      });
+    } else if (chartStyle === 'bars') {
+      mainSeriesRef.current.applyOptions({
+        upColor: settings.candleUpColor,
+        downColor: settings.candleDownColor,
+        lastValueVisible: settings.showLastPriceLabel,
+        priceLineVisible: settings.showPriceLine,
+      });
+    } else {
+      mainSeriesRef.current.applyOptions({
+        lastValueVisible: settings.showLastPriceLabel,
+        priceLineVisible: settings.showPriceLine,
+      });
+    }
+
+    if (settings.precision !== 'default') {
+      const prec = Number(settings.precision);
+      mainSeriesRef.current.applyOptions({
+        priceFormat: {
+          type: 'price',
+          precision: prec,
+          minMove: 1 / Math.pow(10, prec),
+        },
+      });
+    }
+
+    // Indicator last value labels
+    const indSeries = [
+      ema9SeriesRef.current,
+      ema20SeriesRef.current,
+      ema50SeriesRef.current,
+      ema200SeriesRef.current,
+      bbUpperSeriesRef.current,
+      bbMiddleSeriesRef.current,
+      bbLowerSeriesRef.current,
+      supertrendSeriesRef.current,
+    ];
+    for (const s of indSeries) {
+      if (s) {
+        s.applyOptions({
+          lastValueVisible: settings.showIndicatorLabels,
+        });
+      }
+    }
+  }, [settings, chartStyle, symbol]);
 
   // 2. Update Data, Indicators, Colors, Thickness, and Line Styles
   useEffect(() => {
@@ -735,7 +966,14 @@ export const TradingChart = forwardRef<TradingChartRef, TradingChartProps>(({
       )}
 
       {/* 3. Main Chart Canvas Viewport */}
-      <div className="flex-1 w-full relative min-h-[260px] overflow-hidden">
+      <div
+        className="flex-1 w-full relative min-h-[260px] overflow-hidden"
+        onContextMenu={(e) => {
+          e.preventDefault();
+          setScaleMenuPos({ x: e.clientX, y: e.clientY });
+          setIsScaleMenuOpen(true);
+        }}
+      >
         <div ref={chartContainerRef} className="w-full h-full" />
 
         {/* 4. Interactive Drawing SVG Overlay Layer */}
@@ -754,18 +992,42 @@ export const TradingChart = forwardRef<TradingChartRef, TradingChartProps>(({
           areDrawingsLocked={areDrawingsLocked}
         />
 
+        {/* TradingView Range High and Low Labels */}
+        {settings.showHighLowLabels && candles.length > 0 && (
+          <div className="absolute top-2 left-16 z-20 flex items-center gap-2 pointer-events-none text-[10px] font-mono select-none">
+            <span className="px-1.5 py-0.5 rounded bg-emerald-950/70 border border-emerald-500/30 text-emerald-400 shadow-sm">
+              H: ${Math.max(...candles.map((c) => c.high)).toLocaleString(undefined, { minimumFractionDigits: 2 })}
+            </span>
+            <span className="px-1.5 py-0.5 rounded bg-rose-950/70 border border-rose-500/30 text-rose-400 shadow-sm">
+              L: ${Math.min(...candles.map((c) => c.low)).toLocaleString(undefined, { minimumFractionDigits: 2 })}
+            </span>
+          </div>
+        )}
+
+        {/* TradingView Bar Countdown Timer */}
+        {settings.showCountdown && countdownText && (
+          <div
+            className={`absolute top-2 ${
+              settings.scalePosition === 'left' ? 'left-4' : 'right-4'
+            } z-20 px-2 py-0.5 rounded bg-slate-900/90 border border-slate-700/80 text-[10px] font-mono text-slate-300 shadow-md pointer-events-none flex items-center gap-1.5`}
+          >
+            <span className="w-1.5 h-1.5 rounded-full bg-amber-400 animate-pulse" />
+            <span>Close in {countdownText}</span>
+          </div>
+        )}
+
         {/* 5. TradingView Standard Bottom-Right Scale Controls */}
         <div className="absolute bottom-3 right-16 z-20 flex items-center gap-1 pointer-events-auto select-none">
           {/* Auto-Scale Toggle */}
           <button
             type="button"
-            onClick={handleToggleAutoScale}
+            onClick={() => handleUpdateSettings({ autoScale: !settings.autoScale })}
             className={`px-1.5 py-0.5 rounded text-[10px] font-mono font-bold transition-all ${
-              isAutoScale
+              settings.autoScale
                 ? 'bg-blue-600 text-white shadow-md shadow-blue-500/30'
                 : 'bg-slate-900/80 text-slate-400 hover:text-white border border-slate-800'
             }`}
-            title="Toggle Auto-Scale"
+            title="Toggle Auto-Scale (fits data to screen)"
           >
             auto
           </button>
@@ -773,15 +1035,37 @@ export const TradingChart = forwardRef<TradingChartRef, TradingChartProps>(({
           {/* Logarithmic Scale Toggle */}
           <button
             type="button"
-            onClick={handleToggleLogScale}
+            onClick={() =>
+              handleUpdateSettings({
+                scaleMode: settings.scaleMode === 'logarithmic' ? 'normal' : 'logarithmic',
+              })
+            }
             className={`px-1.5 py-0.5 rounded text-[10px] font-mono font-bold transition-all ${
-              isLogScale
+              settings.scaleMode === 'logarithmic'
                 ? 'bg-indigo-600 text-white shadow-md shadow-indigo-500/30'
                 : 'bg-slate-900/80 text-slate-400 hover:text-white border border-slate-800'
             }`}
-            title="Toggle Logarithmic Price Scale"
+            title="Toggle Logarithmic Price Scale (Alt + L)"
           >
             log
+          </button>
+
+          {/* Scale Context Menu Trigger ⚙ */}
+          <button
+            type="button"
+            onClick={(e) => {
+              e.stopPropagation();
+              setScaleMenuPos(null);
+              setIsScaleMenuOpen(!isScaleMenuOpen);
+            }}
+            className={`p-1 rounded transition-all active:scale-95 ${
+              isScaleMenuOpen
+                ? 'bg-blue-600 text-white shadow-md shadow-blue-500/30'
+                : 'bg-slate-900/80 hover:bg-slate-800 text-slate-400 hover:text-white border border-slate-800'
+            }`}
+            title="Price Scale Settings & Context Menu (⚙)"
+          >
+            <Settings className="w-3 h-3" />
           </button>
 
           {/* Re-Center / Normalize Button */}
@@ -810,6 +1094,31 @@ export const TradingChart = forwardRef<TradingChartRef, TradingChartProps>(({
             </button>
           )}
         </div>
+
+        {/* Chart Scale Menu Context Flyout */}
+        <ChartScaleMenu
+          isOpen={isScaleMenuOpen}
+          onClose={() => setIsScaleMenuOpen(false)}
+          settings={settings}
+          onUpdateSettings={handleUpdateSettings}
+          onOpenMoreSettings={() => {
+            setIsScaleMenuOpen(false);
+            setIsChartSettingsModalOpen(true);
+          }}
+          position={scaleMenuPos}
+        />
+
+        {/* Comprehensive Chart Settings Modal */}
+        <ChartSettingsModal
+          isOpen={isChartSettingsModalOpen}
+          onClose={() => setIsChartSettingsModalOpen(false)}
+          settings={settings}
+          onSaveSettings={(newSettings) => {
+            setSettings(newSettings);
+            saveStoredChartSettings(newSettings);
+          }}
+          symbol={symbol}
+        />
       </div>
 
       {/* 6. Synchronized Sub-Pane: RSI (14) */}
