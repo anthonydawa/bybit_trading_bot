@@ -33,6 +33,8 @@ export interface BaseDrawing {
   locked?: boolean;
   visible?: boolean;
   createdAt: number;
+  extendLeft?: boolean;
+  extendRight?: boolean;
 }
 
 export interface TrendlineDrawing extends BaseDrawing {

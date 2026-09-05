@@ -5,6 +5,7 @@ import {
   DrawingToolType,
   ChartPoint,
   PixelPoint,
+  TrendlineDrawing,
   calculateScreenAngle,
   calculateDistance,
   DEFAULT_FIB_LEVELS,
@@ -56,6 +57,7 @@ export const DrawingOverlay: React.FC<DrawingOverlayProps> = ({
   const [draggedPointIndex, setDraggedPointIndex] = useState<number | null>(null);
   const [isDraggingShape, setIsDraggingShape] = useState<boolean>(false);
   const [dragStartPos, setDragStartPos] = useState<PixelPoint | null>(null);
+  const [dragInitialPoints, setDragInitialPoints] = useState<ChartPoint[]>([]);
 
   // Trigger re-render on chart pan, zoom, or tick
   const [, setTick] = useState(0);
@@ -73,34 +75,71 @@ export const DrawingOverlay: React.FC<DrawingOverlayProps> = ({
     };
   }, [chart, forceUpdate]);
 
-  // Coordinate conversion helpers
+  // Coordinate conversion helpers with robust whitespace & logical bar extrapolation
   const pointToPixel = useCallback(
     (pt: ChartPoint): PixelPoint | null => {
       if (!chart || !series) return null;
       try {
-        const x = chart.timeScale().timeToCoordinate(pt.time as any);
+        let x = chart.timeScale().timeToCoordinate(pt.time as any);
+        // If timestamp is in future whitespace or beyond candles, interpolate logical coordinate:
+        if (x === null && candles.length > 0) {
+          const lastCandle = candles[candles.length - 1];
+          const timeStep = candles.length > 1
+            ? Math.max(1, (candles[candles.length - 1].time - candles[0].time) / (candles.length - 1))
+            : 60;
+          const lastCoord = chart.timeScale().timeToCoordinate(lastCandle.time as any);
+          if (lastCoord !== null) {
+            const lastLogical = chart.timeScale().coordinateToLogical(lastCoord);
+            if (lastLogical !== null) {
+              const logicalDiff = (pt.time - lastCandle.time) / timeStep;
+              x = chart.timeScale().logicalToCoordinate((lastLogical + logicalDiff) as any);
+            }
+          }
+        }
+
         const y = series.priceToCoordinate(pt.price);
-        if (x === null || y === null) return null;
+        if (x === null || y === null || isNaN(x) || isNaN(y)) return null;
         return { x, y };
       } catch (e) {
         return null;
       }
     },
-    [chart, series]
+    [chart, series, candles]
   );
 
   const pixelToPoint = useCallback(
     (px: PixelPoint): ChartPoint | null => {
       if (!chart || !series) return null;
       try {
-        const time = chart.timeScale().coordinateToTime(px.x) as number;
+        let time = chart.timeScale().coordinateToTime(px.x) as number | null;
+        // If coordinate is in the future space to the right of latest candle:
+        if ((time === null || isNaN(time)) && candles.length > 0) {
+          const lastCandle = candles[candles.length - 1];
+          const timeStep = candles.length > 1
+            ? Math.max(1, (candles[candles.length - 1].time - candles[0].time) / (candles.length - 1))
+            : 60;
+          const lastCoord = chart.timeScale().timeToCoordinate(lastCandle.time as any);
+          const currentLogical = chart.timeScale().coordinateToLogical(px.x);
+          if (lastCoord !== null && currentLogical !== null) {
+            const lastLogical = chart.timeScale().coordinateToLogical(lastCoord);
+            if (lastLogical !== null) {
+              const logicalDiff = currentLogical - lastLogical;
+              time = Math.round(lastCandle.time + logicalDiff * timeStep);
+            }
+          } else if (currentLogical !== null) {
+            time = Math.round(lastCandle.time + (currentLogical - candles.length) * timeStep);
+          } else {
+            time = lastCandle.time;
+          }
+        }
+
         const price = series.coordinateToPrice(px.y);
         if (time === null || price === null || isNaN(time) || isNaN(price)) return null;
 
-        // Magnet Snap to nearest candle OHLC
+        // Magnet Snap to nearest candle OHLC if enabled
         if (isMagnetEnabled && candles.length > 0) {
           const nearestCandle = candles.reduce((prev, curr) =>
-            Math.abs(curr.time - time) < Math.abs(prev.time - time) ? curr : prev
+            Math.abs(curr.time - time!) < Math.abs(prev.time - time!) ? curr : prev
           );
           if (nearestCandle) {
             const ohlc = [nearestCandle.open, nearestCandle.high, nearestCandle.low, nearestCandle.close];
@@ -129,7 +168,7 @@ export const DrawingOverlay: React.FC<DrawingOverlayProps> = ({
     };
   };
 
-  // Pointer Events: Down, Move, Up
+  // Pointer Events: Down on SVG Canvas (creating new drawings)
   const handlePointerDown = (e: React.PointerEvent<SVGSVGElement>) => {
     if (areDrawingsHidden) return;
     const pos = getPointerPos(e);
@@ -153,8 +192,9 @@ export const DrawingOverlay: React.FC<DrawingOverlayProps> = ({
     if (activeTool !== 'cursor') {
       // Single-click tools (Horizontal line, Vertical line)
       if (activeTool === 'horizontalLine') {
+        const newId = `draw-${Date.now()}`;
         onAddDrawing({
-          id: `draw-${Date.now()}`,
+          id: newId,
           type: 'horizontalLine',
           points: [pt],
           color: '#3b82f6',
@@ -162,13 +202,15 @@ export const DrawingOverlay: React.FC<DrawingOverlayProps> = ({
           lineStyle: 'solid',
           createdAt: Date.now(),
         });
+        setSelectedDrawingId(newId);
         onResetTool();
         return;
       }
 
       if (activeTool === 'verticalLine') {
+        const newId = `draw-${Date.now()}`;
         onAddDrawing({
-          id: `draw-${Date.now()}`,
+          id: newId,
           type: 'verticalLine',
           points: [pt],
           color: '#a855f7',
@@ -176,6 +218,7 @@ export const DrawingOverlay: React.FC<DrawingOverlayProps> = ({
           lineStyle: 'dashed',
           createdAt: Date.now(),
         });
+        setSelectedDrawingId(newId);
         onResetTool();
         return;
       }
@@ -186,21 +229,24 @@ export const DrawingOverlay: React.FC<DrawingOverlayProps> = ({
       } else {
         const p1 = inProgressPoints[0];
         const p2 = pt;
+        const newId = `draw-${Date.now()}`;
 
         if (activeTool === 'trendline') {
           onAddDrawing({
-            id: `draw-${Date.now()}`,
+            id: newId,
             type: 'trendline',
             points: [p1, p2],
             color: '#3b82f6',
             lineWidth: 2,
             lineStyle: 'solid',
             showAngle: true,
+            extendLeft: false,
+            extendRight: false,
             createdAt: Date.now(),
           });
         } else if (activeTool === 'horizontalRay') {
           onAddDrawing({
-            id: `draw-${Date.now()}`,
+            id: newId,
             type: 'horizontalRay',
             points: [p1, p2],
             color: '#06b6d4',
@@ -210,7 +256,7 @@ export const DrawingOverlay: React.FC<DrawingOverlayProps> = ({
           });
         } else if (activeTool === 'rectangle') {
           onAddDrawing({
-            id: `draw-${Date.now()}`,
+            id: newId,
             type: 'rectangle',
             points: [p1, p2],
             color: '#3b82f6',
@@ -222,7 +268,7 @@ export const DrawingOverlay: React.FC<DrawingOverlayProps> = ({
           });
         } else if (activeTool === 'fibonacci') {
           onAddDrawing({
-            id: `draw-${Date.now()}`,
+            id: newId,
             type: 'fibonacci',
             points: [p1, p2],
             color: '#a855f7',
@@ -234,7 +280,7 @@ export const DrawingOverlay: React.FC<DrawingOverlayProps> = ({
           const isLong = p2.price > p1.price;
           const stopPrice = isLong ? p1.price - Math.abs(p2.price - p1.price) * 0.5 : p1.price + Math.abs(p2.price - p1.price) * 0.5;
           onAddDrawing({
-            id: `draw-${Date.now()}`,
+            id: newId,
             type: 'riskReward',
             positionSide: isLong ? 'long' : 'short',
             entryPrice: p1.price,
@@ -249,7 +295,7 @@ export const DrawingOverlay: React.FC<DrawingOverlayProps> = ({
           });
         } else if (activeTool === 'measure') {
           onAddDrawing({
-            id: `draw-${Date.now()}`,
+            id: newId,
             type: 'measure',
             points: [p1, p2],
             color: '#38bdf8',
@@ -261,7 +307,7 @@ export const DrawingOverlay: React.FC<DrawingOverlayProps> = ({
           const userText = window.prompt('Enter chart note text:', 'Key Level / Breakout');
           if (userText) {
             onAddDrawing({
-              id: `draw-${Date.now()}`,
+              id: newId,
               type: 'text',
               text: userText,
               points: [pt],
@@ -273,6 +319,7 @@ export const DrawingOverlay: React.FC<DrawingOverlayProps> = ({
           }
         }
 
+        setSelectedDrawingId(newId);
         setInProgressPoints([]);
         onResetTool();
       }
@@ -280,11 +327,29 @@ export const DrawingOverlay: React.FC<DrawingOverlayProps> = ({
     }
   };
 
+  // Pointer Down on an existing drawing shape
+  const handleDrawingPointerDown = (e: React.PointerEvent, drawing: Drawing) => {
+    e.stopPropagation();
+    if (activeTool === 'eraser') {
+      onDeleteDrawing(drawing.id);
+      return;
+    }
+    if (activeTool === 'cursor') {
+      setSelectedDrawingId(drawing.id);
+      if (!drawing.locked && !areDrawingsLocked) {
+        setIsDraggingShape(true);
+        const pos = getPointerPos(e as any);
+        setDragStartPos(pos);
+        setDragInitialPoints([...drawing.points]);
+      }
+    }
+  };
+
+  // Pointer Move on SVG canvas (live preview during drawing)
   const handlePointerMove = (e: React.PointerEvent<SVGSVGElement>) => {
     const pos = getPointerPos(e);
     setCursorPos(pos);
 
-    // Update in-progress live preview angle & delta
     if (inProgressPoints.length > 0) {
       const p1Pixel = pointToPixel(inProgressPoints[0]);
       if (p1Pixel) {
@@ -303,29 +368,156 @@ export const DrawingOverlay: React.FC<DrawingOverlayProps> = ({
         }
       }
     }
-
-    // Handle Dragging an individual Control Point
-    if (selectedDrawingId && draggedPointIndex !== null) {
-      const pt = pixelToPoint(pos);
-      if (pt) {
-        const sel = drawings.find((d) => d.id === selectedDrawingId);
-        if (sel) {
-          const newPoints = [...sel.points];
-          newPoints[draggedPointIndex] = pt;
-          onUpdateDrawing(selectedDrawingId, { points: newPoints });
-        }
-      }
-    }
   };
 
   const handlePointerUp = () => {
-    setDraggedPointIndex(null);
     setIsDraggingShape(false);
+    setDraggedPointIndex(null);
     setDragStartPos(null);
+    setDragInitialPoints([]);
   };
+
+  // Window-level listeners for dragging shape or individual handles smoothly
+  useEffect(() => {
+    if (!isDraggingShape && draggedPointIndex === null) return;
+
+    const handleWindowPointerMove = (e: PointerEvent) => {
+      const rect = containerRef.current?.getBoundingClientRect();
+      if (!rect) return;
+      const pos: PixelPoint = {
+        x: e.clientX - rect.left,
+        y: e.clientY - rect.top,
+      };
+
+      if (draggedPointIndex !== null && selectedDrawingId) {
+        const pt = pixelToPoint(pos);
+        if (pt) {
+          const sel = drawings.find((d) => d.id === selectedDrawingId);
+          if (sel && !sel.locked) {
+            if (sel.type === 'horizontalLine') {
+              const newPrice = series?.coordinateToPrice(pos.y);
+              if (newPrice !== null && newPrice !== undefined && !isNaN(newPrice)) {
+                onUpdateDrawing(selectedDrawingId, {
+                  points: [{ ...sel.points[0], price: newPrice }],
+                });
+              }
+            } else {
+              const newPoints = [...sel.points];
+              newPoints[draggedPointIndex] = pt;
+              onUpdateDrawing(selectedDrawingId, { points: newPoints });
+            }
+          }
+        }
+      } else if (isDraggingShape && selectedDrawingId && dragStartPos && dragInitialPoints.length > 0) {
+        const sel = drawings.find((d) => d.id === selectedDrawingId);
+        if (sel && !sel.locked) {
+          if (sel.type === 'horizontalLine') {
+            const currentPrice = series?.coordinateToPrice(pos.y);
+            if (currentPrice !== null && currentPrice !== undefined && !isNaN(currentPrice)) {
+              onUpdateDrawing(selectedDrawingId, {
+                points: [{ ...dragInitialPoints[0], price: currentPrice }],
+              });
+            }
+          } else {
+            const startPoint = pixelToPoint(dragStartPos);
+            const currentPoint = pixelToPoint(pos);
+            if (startPoint && currentPoint) {
+              const timeDiff = currentPoint.time - startPoint.time;
+              const priceDiff = currentPoint.price - startPoint.price;
+              const newPoints = dragInitialPoints.map((pt) => ({
+                time: pt.time + timeDiff,
+                price: pt.price + priceDiff,
+              }));
+              onUpdateDrawing(selectedDrawingId, { points: newPoints });
+            }
+          }
+        }
+      }
+    };
+
+    const handleWindowPointerUp = () => {
+      setIsDraggingShape(false);
+      setDraggedPointIndex(null);
+      setDragStartPos(null);
+      setDragInitialPoints([]);
+    };
+
+    window.addEventListener('pointermove', handleWindowPointerMove);
+    window.addEventListener('pointerup', handleWindowPointerUp);
+    return () => {
+      window.removeEventListener('pointermove', handleWindowPointerMove);
+      window.removeEventListener('pointerup', handleWindowPointerUp);
+    };
+  }, [
+    isDraggingShape,
+    draggedPointIndex,
+    selectedDrawingId,
+    dragStartPos,
+    dragInitialPoints,
+    drawings,
+    pixelToPoint,
+    onUpdateDrawing,
+    series,
+  ]);
+
+  // Keyboard Shortcuts: Delete/Backspace to delete selected drawing, Escape to deselect/cancel
+  useEffect(() => {
+    const handleKeyDown = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') {
+        setSelectedDrawingId(null);
+        setInProgressPoints([]);
+        onResetTool();
+      } else if ((e.key === 'Delete' || e.key === 'Backspace') && selectedDrawingId) {
+        const target = e.target as HTMLElement;
+        if (target && (target.tagName === 'INPUT' || target.tagName === 'TEXTAREA')) return;
+        onDeleteDrawing(selectedDrawingId);
+        setSelectedDrawingId(null);
+      }
+    };
+
+    window.addEventListener('keydown', handleKeyDown);
+    return () => {
+      window.removeEventListener('keydown', handleKeyDown);
+    };
+  }, [selectedDrawingId, onDeleteDrawing, onResetTool]);
+
+  // Deselect when clicking empty space on chart canvas
+  useEffect(() => {
+    if (!chart) return;
+    const handleChartClick = () => {
+      if (activeTool === 'cursor') {
+        setSelectedDrawingId(null);
+      }
+    };
+    chart.subscribeClick(handleChartClick);
+    return () => {
+      chart.unsubscribeClick(handleChartClick);
+    };
+  }, [chart, activeTool]);
 
   const selectedDrawing = drawings.find((d) => d.id === selectedDrawingId);
   const selectedPixels = selectedDrawing ? (selectedDrawing.points.map(pointToPixel).filter(Boolean) as PixelPoint[]) : [];
+
+  // Floating toolbar anchor position helper
+  const getToolbarPos = (): { x: number; y: number } | null => {
+    if (!selectedDrawing) return null;
+    if (selectedDrawing.type === 'horizontalLine') {
+      const y = series ? series.priceToCoordinate(selectedDrawing.points[0]?.price) : null;
+      if (y === null || isNaN(y)) return null;
+      const x = containerRef.current ? Math.min(containerRef.current.clientWidth - 480, 240) : 240;
+      return { x: Math.max(20, x), y: Math.max(50, y) };
+    }
+    if (selectedPixels.length > 0) {
+      const p1 = selectedPixels[0];
+      const p2 = selectedPixels[1] || p1;
+      return {
+        x: (p1.x + p2.x) / 2,
+        y: Math.min(p1.y, p2.y),
+      };
+    }
+    return null;
+  };
+  const toolbarPos = getToolbarPos();
 
   const isDrawingToolActive = activeTool !== 'cursor';
 
@@ -337,10 +529,12 @@ export const DrawingOverlay: React.FC<DrawingOverlayProps> = ({
           ? activeTool === 'eraser'
             ? 'cursor-not-allowed pointer-events-auto'
             : 'cursor-crosshair pointer-events-auto'
+          : isDraggingShape || draggedPointIndex !== null
+          ? 'cursor-move pointer-events-auto'
           : 'pointer-events-none'
       }`}
       onPointerDown={isDrawingToolActive ? handlePointerDown : undefined}
-      onPointerMove={isDrawingToolActive || draggedPointIndex !== null ? handlePointerMove : undefined}
+      onPointerMove={isDrawingToolActive ? handlePointerMove : undefined}
       onPointerUp={handlePointerUp}
       onPointerLeave={() => {
         setCursorPos(null);
@@ -357,8 +551,47 @@ export const DrawingOverlay: React.FC<DrawingOverlayProps> = ({
           const strokeDash =
             drawing.lineStyle === 'dashed' ? '6,4' : drawing.lineStyle === 'dotted' ? '2,3' : undefined;
 
-          // 1. Trendline
+          // 1. Trendline (with Extend Left / Extend Right ray math)
           if (drawing.type === 'trendline' && pixels.length >= 2) {
+            const svgWidth = containerRef.current?.clientWidth || 1200;
+            let startX = pixels[0].x;
+            let startY = pixels[0].y;
+            let endX = pixels[1].x;
+            let endY = pixels[1].y;
+
+            const dx = pixels[1].x - pixels[0].x;
+            const dy = pixels[1].y - pixels[0].y;
+
+            if (Math.abs(dx) > 0.0001) {
+              const slope = dy / dx;
+              const isP0Left = pixels[0].x <= pixels[1].x;
+              const pLeft = isP0Left ? pixels[0] : pixels[1];
+              const pRight = isP0Left ? pixels[1] : pixels[0];
+
+              if (drawing.extendLeft) {
+                const targetLeftX = -500;
+                const targetLeftY = pLeft.y + slope * (targetLeftX - pLeft.x);
+                if (isP0Left) {
+                  startX = targetLeftX;
+                  startY = targetLeftY;
+                } else {
+                  endX = targetLeftX;
+                  endY = targetLeftY;
+                }
+              }
+              if (drawing.extendRight) {
+                const targetRightX = svgWidth + 500;
+                const targetRightY = pRight.y + slope * (targetRightX - pRight.x);
+                if (isP0Left) {
+                  endX = targetRightX;
+                  endY = targetRightY;
+                } else {
+                  startX = targetRightX;
+                  startY = targetRightY;
+                }
+              }
+            }
+
             const angle = calculateScreenAngle(pixels[0], pixels[1]);
             const midX = (pixels[0].x + pixels[1].x) / 2;
             const midY = (pixels[0].y + pixels[1].y) / 2;
@@ -367,39 +600,32 @@ export const DrawingOverlay: React.FC<DrawingOverlayProps> = ({
               <g
                 key={drawing.id}
                 className="pointer-events-auto cursor-pointer"
-                onClick={(e) => {
-                  e.stopPropagation();
-                  if (activeTool === 'eraser') {
-                    onDeleteDrawing(drawing.id);
-                  } else if (activeTool === 'cursor' && !areDrawingsLocked) {
-                    setSelectedDrawingId(drawing.id);
-                  }
-                }}
+                onPointerDown={(e) => handleDrawingPointerDown(e, drawing)}
               >
                 {/* Hit test wider transparent stroke */}
                 <line
-                  x1={pixels[0].x}
-                  y1={pixels[0].y}
-                  x2={pixels[1].x}
-                  y2={pixels[1].y}
+                  x1={startX}
+                  y1={startY}
+                  x2={endX}
+                  y2={endY}
                   stroke="transparent"
-                  strokeWidth={14}
+                  strokeWidth={18}
                 />
                 {/* Visual Line */}
                 <line
-                  x1={pixels[0].x}
-                  y1={pixels[0].y}
-                  x2={pixels[1].x}
-                  y2={pixels[1].y}
+                  x1={startX}
+                  y1={startY}
+                  x2={endX}
+                  y2={endY}
                   stroke={drawing.color}
-                  strokeWidth={drawing.lineWidth}
+                  strokeWidth={isSelected ? drawing.lineWidth + 1 : drawing.lineWidth}
                   strokeDasharray={strokeDash}
                 />
                 {/* Angle & Info Badge */}
                 {isSelected && (
-                  <g transform={`translate(${midX}, ${midY - 12})`}>
-                    <rect x="-35" y="-10" width="70" height="20" rx="6" fill="#0d131f" stroke="#334155" strokeWidth="1" />
-                    <text x="0" y="3" fill="#cbd5e1" fontSize="10" fontFamily="monospace" textAnchor="middle">
+                  <g transform={`translate(${midX}, ${midY - 14})`}>
+                    <rect x="-35" y="-10" width="70" height="20" rx="6" fill="#0d131f" stroke="#3b82f6" strokeWidth="1" />
+                    <text x="0" y="4" fill="#38bdf8" fontSize="10" fontFamily="monospace" textAnchor="middle" fontWeight="bold">
                       {angle}°
                     </text>
                   </g>
@@ -408,45 +634,42 @@ export const DrawingOverlay: React.FC<DrawingOverlayProps> = ({
             );
           }
 
-          // 2. Horizontal Line (Support / Resistance Across Full Chart)
+          // 2. Horizontal Line (Support / Resistance Across Full Chart Width)
           if (drawing.type === 'horizontalLine' && pixels.length >= 1) {
-            const priceStr = drawing.points[0].price.toFixed(2);
+            const yCoord = series ? (series.priceToCoordinate(drawing.points[0]?.price) ?? pixels[0].y) : pixels[0].y;
+            const priceStr = drawing.points[0]?.price?.toFixed(2) ?? '0.00';
+            const svgWidth = containerRef.current?.clientWidth || 1000;
+            const badgeX = Math.min(Math.max(pixels[0].x, 80), svgWidth - 120);
+
             return (
               <g
                 key={drawing.id}
                 className="pointer-events-auto cursor-pointer"
-                onClick={(e) => {
-                  e.stopPropagation();
-                  if (activeTool === 'eraser') {
-                    onDeleteDrawing(drawing.id);
-                  } else if (activeTool === 'cursor' && !areDrawingsLocked) {
-                    setSelectedDrawingId(drawing.id);
-                  }
-                }}
+                onPointerDown={(e) => handleDrawingPointerDown(e, drawing)}
               >
                 {/* Hit test wider area */}
                 <line
                   x1={0}
-                  y1={pixels[0].y}
+                  y1={yCoord}
                   x2="100%"
-                  y2={pixels[0].y}
+                  y2={yCoord}
                   stroke="transparent"
-                  strokeWidth={14}
+                  strokeWidth={18}
                 />
                 {/* Visual line */}
                 <line
                   x1={0}
-                  y1={pixels[0].y}
+                  y1={yCoord}
                   x2="100%"
-                  y2={pixels[0].y}
+                  y2={yCoord}
                   stroke={drawing.color}
-                  strokeWidth={drawing.lineWidth}
+                  strokeWidth={isSelected ? drawing.lineWidth + 1 : drawing.lineWidth}
                   strokeDasharray={strokeDash}
                 />
                 {/* Price scale badge */}
-                <g transform={`translate(${pixels[0].x + 10}, ${pixels[0].y - 10})`}>
-                  <rect x="0" y="0" width="65" height="18" rx="4" fill="#0d131f" stroke={drawing.color} strokeWidth="1" />
-                  <text x="32" y="12" fill={drawing.color} fontSize="10" fontFamily="monospace" textAnchor="middle" fontWeight="bold">
+                <g transform={`translate(${badgeX}, ${yCoord - 10})`}>
+                  <rect x="0" y="0" width="72" height="20" rx="4" fill="#0d131f" stroke={drawing.color} strokeWidth="1" />
+                  <text x="36" y="14" fill={drawing.color} fontSize="10" fontFamily="monospace" textAnchor="middle" fontWeight="bold">
                     ${priceStr}
                   </text>
                 </g>
@@ -456,34 +679,28 @@ export const DrawingOverlay: React.FC<DrawingOverlayProps> = ({
 
           // 3. Horizontal Ray
           if (drawing.type === 'horizontalRay' && pixels.length >= 1) {
+            const yCoord = series ? (series.priceToCoordinate(drawing.points[0]?.price) ?? pixels[0].y) : pixels[0].y;
             return (
               <g
                 key={drawing.id}
                 className="pointer-events-auto cursor-pointer"
-                onClick={(e) => {
-                  e.stopPropagation();
-                  if (activeTool === 'eraser') {
-                    onDeleteDrawing(drawing.id);
-                  } else if (activeTool === 'cursor' && !areDrawingsLocked) {
-                    setSelectedDrawingId(drawing.id);
-                  }
-                }}
+                onPointerDown={(e) => handleDrawingPointerDown(e, drawing)}
               >
                 <line
                   x1={pixels[0].x}
-                  y1={pixels[0].y}
+                  y1={yCoord}
                   x2="100%"
-                  y2={pixels[0].y}
+                  y2={yCoord}
                   stroke="transparent"
-                  strokeWidth={14}
+                  strokeWidth={18}
                 />
                 <line
                   x1={pixels[0].x}
-                  y1={pixels[0].y}
+                  y1={yCoord}
                   x2="100%"
-                  y2={pixels[0].y}
+                  y2={yCoord}
                   stroke={drawing.color}
-                  strokeWidth={drawing.lineWidth}
+                  strokeWidth={isSelected ? drawing.lineWidth + 1 : drawing.lineWidth}
                   strokeDasharray={strokeDash}
                 />
               </g>
@@ -496,14 +713,7 @@ export const DrawingOverlay: React.FC<DrawingOverlayProps> = ({
               <g
                 key={drawing.id}
                 className="pointer-events-auto cursor-pointer"
-                onClick={(e) => {
-                  e.stopPropagation();
-                  if (activeTool === 'eraser') {
-                    onDeleteDrawing(drawing.id);
-                  } else if (activeTool === 'cursor' && !areDrawingsLocked) {
-                    setSelectedDrawingId(drawing.id);
-                  }
-                }}
+                onPointerDown={(e) => handleDrawingPointerDown(e, drawing)}
               >
                 <line
                   x1={pixels[0].x}
@@ -511,7 +721,7 @@ export const DrawingOverlay: React.FC<DrawingOverlayProps> = ({
                   x2={pixels[0].x}
                   y2="100%"
                   stroke="transparent"
-                  strokeWidth={14}
+                  strokeWidth={18}
                 />
                 <line
                   x1={pixels[0].x}
@@ -519,7 +729,7 @@ export const DrawingOverlay: React.FC<DrawingOverlayProps> = ({
                   x2={pixels[0].x}
                   y2="100%"
                   stroke={drawing.color}
-                  strokeWidth={drawing.lineWidth}
+                  strokeWidth={isSelected ? drawing.lineWidth + 1 : drawing.lineWidth}
                   strokeDasharray={strokeDash}
                 />
               </g>
@@ -537,14 +747,7 @@ export const DrawingOverlay: React.FC<DrawingOverlayProps> = ({
               <g
                 key={drawing.id}
                 className="pointer-events-auto cursor-pointer"
-                onClick={(e) => {
-                  e.stopPropagation();
-                  if (activeTool === 'eraser') {
-                    onDeleteDrawing(drawing.id);
-                  } else if (activeTool === 'cursor' && !areDrawingsLocked) {
-                    setSelectedDrawingId(drawing.id);
-                  }
-                }}
+                onPointerDown={(e) => handleDrawingPointerDown(e, drawing)}
               >
                 <rect
                   x={minX}
@@ -554,7 +757,7 @@ export const DrawingOverlay: React.FC<DrawingOverlayProps> = ({
                   fill={drawing.color}
                   fillOpacity={0.15}
                   stroke={drawing.color}
-                  strokeWidth={drawing.lineWidth}
+                  strokeWidth={isSelected ? drawing.lineWidth + 1 : drawing.lineWidth}
                   strokeDasharray={strokeDash}
                   rx={4}
                 />
@@ -574,15 +777,16 @@ export const DrawingOverlay: React.FC<DrawingOverlayProps> = ({
               <g
                 key={drawing.id}
                 className="pointer-events-auto cursor-pointer"
-                onClick={(e) => {
-                  e.stopPropagation();
-                  if (activeTool === 'eraser') {
-                    onDeleteDrawing(drawing.id);
-                  } else if (activeTool === 'cursor' && !areDrawingsLocked) {
-                    setSelectedDrawingId(drawing.id);
-                  }
-                }}
+                onPointerDown={(e) => handleDrawingPointerDown(e, drawing)}
               >
+                {/* Background hit test rect */}
+                <rect
+                  x={minX}
+                  y={highY}
+                  width={Math.max(maxX - minX, 20)}
+                  height={Math.max(diffY, 10)}
+                  fill="transparent"
+                />
                 {DEFAULT_FIB_LEVELS.map((fib) => {
                   const levelY = highY + diffY * fib.level;
                   return (
@@ -593,7 +797,7 @@ export const DrawingOverlay: React.FC<DrawingOverlayProps> = ({
                         x2={maxX}
                         y2={levelY}
                         stroke={fib.color}
-                        strokeWidth={1}
+                        strokeWidth={fib.level === 0.618 ? 2 : 1}
                         strokeDasharray={fib.level === 0.618 ? undefined : '3,3'}
                       />
                       <text x={minX + 4} y={levelY - 3} fill={fib.color} fontSize="9" fontFamily="monospace" fontWeight="bold">
@@ -621,14 +825,7 @@ export const DrawingOverlay: React.FC<DrawingOverlayProps> = ({
               <g
                 key={drawing.id}
                 className="pointer-events-auto cursor-pointer"
-                onClick={(e) => {
-                  e.stopPropagation();
-                  if (activeTool === 'eraser') {
-                    onDeleteDrawing(drawing.id);
-                  } else if (activeTool === 'cursor' && !areDrawingsLocked) {
-                    setSelectedDrawingId(drawing.id);
-                  }
-                }}
+                onPointerDown={(e) => handleDrawingPointerDown(e, drawing)}
               >
                 {/* Target Profit Zone (Green) */}
                 <rect
@@ -673,16 +870,9 @@ export const DrawingOverlay: React.FC<DrawingOverlayProps> = ({
                 key={drawing.id}
                 transform={`translate(${pixels[0].x}, ${pixels[0].y})`}
                 className="pointer-events-auto cursor-pointer"
-                onClick={(e) => {
-                  e.stopPropagation();
-                  if (activeTool === 'eraser') {
-                    onDeleteDrawing(drawing.id);
-                  } else if (activeTool === 'cursor' && !areDrawingsLocked) {
-                    setSelectedDrawingId(drawing.id);
-                  }
-                }}
+                onPointerDown={(e) => handleDrawingPointerDown(e, drawing)}
               >
-                <rect x="0" y="-18" width={noteText.length * 8 + 16} height="24" rx="6" fill="#0d131f" stroke={drawing.color} strokeWidth="1" />
+                <rect x="0" y="-18" width={noteText.length * 8 + 16} height="24" rx="6" fill="#0d131f" stroke={drawing.color} strokeWidth={isSelected ? 2 : 1} />
                 <text x="8" y="-2" fill={drawing.color} fontSize="11" fontFamily="sans-serif" fontWeight="bold">
                   {noteText}
                 </text>
@@ -701,14 +891,7 @@ export const DrawingOverlay: React.FC<DrawingOverlayProps> = ({
               <g
                 key={drawing.id}
                 className="pointer-events-auto cursor-pointer"
-                onClick={(e) => {
-                  e.stopPropagation();
-                  if (activeTool === 'eraser') {
-                    onDeleteDrawing(drawing.id);
-                  } else if (activeTool === 'cursor' && !areDrawingsLocked) {
-                    setSelectedDrawingId(drawing.id);
-                  }
-                }}
+                onPointerDown={(e) => handleDrawingPointerDown(e, drawing)}
               >
                 <rect x={minX} y={minY} width={width} height={height} fill="#38bdf8" fillOpacity={0.15} stroke="#38bdf8" strokeWidth={1} strokeDasharray="3,3" />
                 <g transform={`translate(${minX + width / 2 - 45}, ${minY + height / 2 - 12})`}>
@@ -724,9 +907,9 @@ export const DrawingOverlay: React.FC<DrawingOverlayProps> = ({
           return null;
         })}
 
-      {/* RENDER IN-PROGRESS LIVE DRAWING PREVIEW */}
+      {/* RENDER IN-PROGRESS LIVE DRAWING PREVIEW (pointerEvents: none prevents blocking second click) */}
       {inProgressPoints.length > 0 && cursorPos && (
-        <g>
+        <g style={{ pointerEvents: 'none' }}>
           {(() => {
             const p1 = pointToPixel(inProgressPoints[0]);
             if (!p1) return null;
@@ -786,25 +969,49 @@ export const DrawingOverlay: React.FC<DrawingOverlayProps> = ({
       {/* SELECTION CONTROL HANDLES FOR ACTIVE DRAWING */}
       {selectedDrawing &&
         !areDrawingsLocked &&
-        selectedPixels.map((pt, idx) => (
-          <circle
-            key={`handle-${idx}`}
-            cx={pt.x}
-            cy={pt.y}
-            r={6}
-            fill="#ffffff"
-            stroke="#3b82f6"
-            strokeWidth={2}
-            className="pointer-events-auto cursor-move hover:scale-125 transition-transform"
-            onPointerDown={(e) => {
-              e.stopPropagation();
-              setDraggedPointIndex(idx);
-            }}
-          />
+        (selectedDrawing.type === 'horizontalLine' ? (
+          (() => {
+            const y = series ? (series.priceToCoordinate(selectedDrawing.points[0]?.price) ?? selectedPixels[0]?.y) : selectedPixels[0]?.y;
+            if (y === undefined || y === null) return null;
+            const svgWidth = containerRef.current?.clientWidth || 800;
+            return (
+              <circle
+                key="handle-hline-center"
+                cx={svgWidth / 2}
+                cy={y}
+                r={6}
+                fill="#ffffff"
+                stroke="#3b82f6"
+                strokeWidth={2}
+                className="pointer-events-auto cursor-ns-resize hover:scale-125 transition-transform"
+                onPointerDown={(e) => {
+                  e.stopPropagation();
+                  setDraggedPointIndex(0);
+                }}
+              />
+            );
+          })()
+        ) : (
+          selectedPixels.map((pt, idx) => (
+            <circle
+              key={`handle-${idx}`}
+              cx={pt.x}
+              cy={pt.y}
+              r={6}
+              fill="#ffffff"
+              stroke="#3b82f6"
+              strokeWidth={2}
+              className="pointer-events-auto cursor-move hover:scale-125 transition-transform"
+              onPointerDown={(e) => {
+                e.stopPropagation();
+                setDraggedPointIndex(idx);
+              }}
+            />
+          ))
         ))}
 
       {/* FLOATING ACTION TOOLBAR FOR SELECTED DRAWING */}
-      {selectedDrawing && selectedPixels.length > 0 && (
+      {selectedDrawing && toolbarPos && (
         <foreignObject
           x={0}
           y={0}
@@ -815,10 +1022,7 @@ export const DrawingOverlay: React.FC<DrawingOverlayProps> = ({
           <div style={{ pointerEvents: 'auto' }}>
             <DrawingFloatingToolbar
               drawing={selectedDrawing}
-              position={{
-                x: selectedPixels[0].x,
-                y: selectedPixels[0].y,
-              }}
+              position={toolbarPos}
               onUpdate={(patch) => onUpdateDrawing(selectedDrawing.id, patch)}
               onDelete={() => {
                 onDeleteDrawing(selectedDrawing.id);

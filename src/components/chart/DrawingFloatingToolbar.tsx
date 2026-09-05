@@ -4,9 +4,11 @@ import {
   Lock,
   Unlock,
   Check,
-  X
+  X,
+  ArrowLeft,
+  ArrowRight
 } from 'lucide-react';
-import { Drawing, LineStyleType } from '../../lib/drawingTypes';
+import { Drawing, LineStyleType, TrendlineDrawing } from '../../lib/drawingTypes';
 
 interface DrawingFloatingToolbarProps {
   drawing: Drawing;
@@ -35,15 +37,25 @@ export const DrawingFloatingToolbar: React.FC<DrawingFloatingToolbarProps> = ({
   onDelete,
   onClose,
 }) => {
+  const isTrendline = drawing.type === 'trendline';
+  const trendline = isTrendline ? (drawing as TrendlineDrawing) : null;
+
   return (
     <div
       className="absolute z-30 flex items-center gap-1.5 p-1.5 bg-[#0d131f]/95 backdrop-blur-md border border-slate-700/90 rounded-2xl shadow-2xl text-xs font-sans select-none animate-fade-in"
       style={{
-        left: `${Math.max(10, Math.min(window.innerWidth - 380, position.x))}px`,
+        left: `${Math.max(10, Math.min(window.innerWidth - 460, position.x))}px`,
         top: `${Math.max(45, position.y - 45)}px`,
       }}
       onClick={(e) => e.stopPropagation()}
     >
+      {/* Horizontal Line Price Pill */}
+      {drawing.type === 'horizontalLine' && drawing.points[0] && (
+        <div className="px-2 py-0.5 bg-slate-900 border border-slate-800 rounded-lg text-[11px] font-mono font-bold text-blue-300 mr-1 shadow-inner">
+          ${drawing.points[0].price.toFixed(2)}
+        </div>
+      )}
+
       {/* 1. Color Selector */}
       <div className="flex items-center gap-1 px-1 border-r border-slate-800 pr-2">
         {PRESET_COLORS.slice(0, 6).map((color) => (
@@ -107,6 +119,39 @@ export const DrawingFloatingToolbar: React.FC<DrawingFloatingToolbarProps> = ({
           </button>
         ))}
       </div>
+
+      {/* 4. Trendline Ray Extensions: Extend Left & Extend Right */}
+      {isTrendline && trendline && (
+        <div className="flex items-center gap-1 px-1 border-r border-slate-800 pr-2">
+          <button
+            type="button"
+            onClick={() => onUpdate({ extendLeft: !trendline.extendLeft })}
+            className={`px-1.5 py-0.5 rounded-md text-[10px] font-medium transition-all flex items-center gap-0.5 ${
+              trendline.extendLeft
+                ? 'bg-blue-600 text-white font-bold'
+                : 'text-slate-400 hover:text-white hover:bg-slate-800'
+            }`}
+            title="Extend Left (Ray across left chart boundary)"
+          >
+            <ArrowLeft className="w-3 h-3" />
+            <span>Ext L</span>
+          </button>
+
+          <button
+            type="button"
+            onClick={() => onUpdate({ extendRight: !trendline.extendRight })}
+            className={`px-1.5 py-0.5 rounded-md text-[10px] font-medium transition-all flex items-center gap-0.5 ${
+              trendline.extendRight
+                ? 'bg-blue-600 text-white font-bold'
+                : 'text-slate-400 hover:text-white hover:bg-slate-800'
+            }`}
+            title="Extend Right (Ray across right chart boundary)"
+          >
+            <span>Ext R</span>
+            <ArrowRight className="w-3 h-3" />
+          </button>
+        </div>
+      )}
 
       {/* 4. Lock / Unlock */}
       <button
